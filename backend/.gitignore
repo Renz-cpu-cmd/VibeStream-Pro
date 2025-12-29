@@ -2,3 +2,10 @@
 __pycache__/
 *.pyc
 .env
+
+# Cookies file (contains sensitive auth data - NEVER commit)
+cookies.txt
+
+# Local ffmpeg binaries (Windows dev only)
+ffmpeg.exe
+ffprobe.exe

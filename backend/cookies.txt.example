@@ -1,0 +1,15 @@
+# Netscape HTTP Cookie File
+# This file is used by yt-dlp to authenticate with YouTube
+# 
+# HOW TO CREATE THIS FILE:
+# 1. Install a browser extension like "Get cookies.txt LOCALLY" 
+#    (Chrome: https://chrome.google.com/webstore/detail/get-cookiestxt-locally/)
+# 2. Log into YouTube with a THROWAWAY account (not your main account!)
+# 3. Export cookies and save as cookies.txt in this folder
+# 4. NEVER commit this file to git (it's in .gitignore)
+#
+# WARNING: Using your main Google account risks getting it banned.
+# Always use a throwaway/burner account for this purpose.
+#
+# The app will work without this file (using guest mode),
+# but some videos may be restricted.
