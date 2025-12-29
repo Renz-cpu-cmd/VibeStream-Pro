@@ -1,0 +1,14 @@
+# Render Blueprint for VibeStream Pro Backend
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: vibestream-pro-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: CORS_ORIGINS
+        value: ""  # Add your Vercel URL here if needed (comma-separated)
+    healthCheckPath: /health
+    plan: free
