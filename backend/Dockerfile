@@ -1,13 +1,28 @@
 # VibeStream Pro Backend
-# Python 3.11 + ffmpeg for Render deployment
+# Python 3.11 + ffmpeg + Deno (JS runtime for yt-dlp n-sig solver)
 
 FROM python:3.11-slim
 
-# Install ffmpeg and ffprobe via apt
+# Install system dependencies:
+# - ffmpeg: audio/video processing
+# - curl: for installing Deno
+# - unzip: for Deno installation
+# - ca-certificates: for HTTPS requests
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        curl \
+        unzip \
+        ca-certificates && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Install Deno (JavaScript runtime for yt-dlp n-sig challenge solver)
+# yt-dlp 2024.12+ requires an external JS runtime (Deno, QuickJS, or PhantomJS)
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+
+# Verify Deno installation
+RUN deno --version
 
 # Set working directory
 WORKDIR /app
@@ -16,6 +31,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
+# yt-dlp with curl-cffi for browser impersonation (bypass TLS fingerprinting)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code (excluding cookies.txt for security)

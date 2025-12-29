@@ -3,10 +3,12 @@ VibeStream Pro API
 - Rate limiting (5 downloads/hour per IP)
 - Cookie-based auth with guest fallback
 - Privacy-first logging (no URLs logged)
+- Late-2025 yt-dlp standards (n-sig solver, curl-cffi impersonation)
 """
 
 import logging
 import os
+import random
 import re
 import shutil
 import tempfile
@@ -82,15 +84,25 @@ def startup_checks():
     else:
         logger.warning("⚠️  ffmpeg not found! MP3 conversion will fail.")
 
+    # Deno/JS runtime check (for n-sig solver)
+    if shutil.which("deno"):
+        logger.info("✅ Deno JS runtime found (n-sig solver ready)")
+    elif shutil.which("quickjs"):
+        logger.info("✅ QuickJS runtime found (n-sig solver ready)")
+    else:
+        logger.warning("⚠️  No JS runtime (Deno/QuickJS) - some videos may fail")
+
     # Cookies check
     cookies = get_cookies_path()
     if cookies:
         logger.info("✅ cookies.txt found - authenticated mode enabled")
     else:
-        logger.info("ℹ️  No cookies.txt - using guest mode (mweb client)")
+        logger.info("ℹ️  No cookies.txt - using guest mode (mweb + tv_embedded)")
 
     # Rate limit info
     logger.info("✅ Rate limiting active: 5 downloads/hour per IP")
+    logger.info("✅ Browser impersonation enabled (curl-cffi)")
+    logger.info("✅ Random sleep intervals: 3-8 seconds")
 
 
 # ---------- CORS Setup ----------
@@ -142,9 +154,17 @@ def sanitize_filename(name: str) -> str:
 
 def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> dict:
     """
-    Build yt-dlp options with cookie support and guest mode fallback.
-    Tries cookies first, falls back to mweb client if unavailable.
+    Build yt-dlp options with late-2025 anti-bot bypass standards:
+    - Random sleep intervals (3-8s) to avoid linear request patterns
+    - Browser impersonation via curl-cffi
+    - Client spoofing (mweb/tv_embedded)
+    - Extractor args to skip webpage/config fetching
+    - Cookie support with Netscape format validation
     """
+    # Random sleep interval to avoid bot detection (3-8 seconds)
+    sleep_min = 3
+    sleep_max = 8
+    
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
@@ -156,6 +176,12 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "writeannotations": False,
         "writesubtitles": False,
         "writethumbnail": False,
+        # Rate limiting: random sleep between requests
+        "sleep_interval": sleep_min,
+        "max_sleep_interval": sleep_max,
+        "sleep_interval_requests": random.uniform(1, 3),
+        # Browser impersonation via curl-cffi (bypasses TLS fingerprinting)
+        "impersonate": "chrome",
     }
 
     if not for_download:
@@ -168,20 +194,29 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     # Try cookies first, then fallback to guest mode
     cookies = get_cookies_path()
     if cookies:
+        # Cookies file should be in Netscape format
         opts["cookiefile"] = str(cookies)
-    else:
-        # Guest mode: use mobile web client to bypass bot detection
+        # Still use safe extractor args even with cookies
         opts["extractor_args"] = {
             "youtube": {
-                "player_client": ["mweb"],
-                # visitor_data helps bypass bot detection without login
+                "player_client": ["mweb", "tv_embedded"],
                 "player_skip": ["webpage", "configs"],
             }
         }
-        # Additional options for guest mode
-        opts["http_headers"] = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    else:
+        # Guest mode: use mobile web + tv_embedded clients for maximum compatibility
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["mweb", "tv_embedded"],
+                "player_skip": ["webpage", "configs"],
+            }
         }
+
+    # HTTP headers for all requests (mobile user agent)
+    opts["http_headers"] = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
 
     return opts
 
