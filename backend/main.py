@@ -55,6 +55,7 @@ FFMPEG_LOCATION: str | None = str(BACKEND_DIR) if USE_LOCAL_FFMPEG else None
 # ---------- Cookies Setup ----------
 COOKIES_PATH = BACKEND_DIR / "cookies.txt"
 COOKIES_SECRET_PATH = Path("/run/secrets/cookies_txt")
+COOKIES_RENDER_PATH = Path("/etc/secrets/cookies.txt")  # Render's secret file path
 
 # ---------- PO Token Setup (Proof of Origin) ----------
 # Priority: Manual env var > Auto-generated via CLI
@@ -205,10 +206,18 @@ def get_random_impersonate() -> str:
 
 
 def get_cookies_path() -> Path | None:
-    """Return cookies path if exists, checking both local and Docker secrets."""
+    """Return cookies path if exists, checking Render secrets, Docker secrets, then local."""
+    # Priority 1: Render secret file path
+    if COOKIES_RENDER_PATH.exists():
+        logger.info("🍪 Using cookies from /etc/secrets/cookies.txt (Render)")
+        return COOKIES_RENDER_PATH
+    # Priority 2: Docker secrets path
     if COOKIES_SECRET_PATH.exists():
+        logger.info("🍪 Using cookies from /run/secrets/cookies_txt (Docker)")
         return COOKIES_SECRET_PATH
+    # Priority 3: Local cookies file
     if COOKIES_PATH.exists():
+        logger.info("🍪 Using cookies from local cookies.txt")
         return COOKIES_PATH
     return None
 
@@ -345,6 +354,9 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "writeannotations": False,
         "writesubtitles": False,
         "writethumbnail": False,
+        # Stability: skip format checking for faster metadata analysis
+        "check_formats": False,
+        "file_access_prefs": [],
         # Rate limiting: longer sleep to look less like a bot (5-10 seconds)
         "sleep_interval": 5,
         "max_sleep_interval": 10,
@@ -372,11 +384,11 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     # Build extractor args with client rotation and PO Token
     extractor_args: dict = {
         "youtube": {
-            # Client priority: mweb + web for PO Token, android as fallback
-            # mweb = Mobile web (lowest bot detection, try first)
+            # Client priority: ios + android first (YouTube more lenient with signed-in mobile)
+            # ios = iOS app client (best with cookies)
+            # android = Android app client (good fallback)
             # web = Desktop web client (works with PO Token)
-            # android = Android client (different security threshold, fallback)
-            "player_client": ["mweb", "web", "android"],
+            "player_client": ["ios", "android", "web"],
             # Skip webpage and configs to reduce detection surface
             "player_skip": ["webpage", "configs"],
         }
