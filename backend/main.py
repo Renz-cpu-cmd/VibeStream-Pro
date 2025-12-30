@@ -16,6 +16,7 @@ import random
 import re
 import shutil
 import tempfile
+import traceback
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -228,10 +229,6 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     5. User-Agent rotation - unique fingerprint per request
     6. Extractor args - skip webpage/config to reduce detection surface
     """
-    # Random sleep interval to appear human-like
-    sleep_min = 3
-    sleep_max = 8
-    
     opts: dict = {
         "verbose": True,  # Enable verbose logging to see exact errors
         "quiet": False,   # Disable quiet mode for debugging
@@ -244,13 +241,13 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "writeannotations": False,
         "writesubtitles": False,
         "writethumbnail": False,
-        # Rate limiting: random sleep between requests (3-8 seconds)
-        "sleep_interval": sleep_min,
-        "max_sleep_interval": sleep_max,
-        "sleep_interval_requests": random.uniform(1, 3),
+        # Rate limiting: longer sleep to look less like a bot (5-10 seconds)
+        "sleep_interval": 5,
+        "max_sleep_interval": 10,
+        "sleep_interval_requests": random.uniform(2, 5),
         # Browser impersonation via curl-cffi (bypasses TLS fingerprinting)
-        # Rotates between chrome, edge, safari fingerprints
-        "impersonate": get_random_impersonate(),
+        # Use Chrome consistently - DO NOT rotate, as PO Token is tied to Chrome
+        "impersonate": "chrome",
     }
 
     if not for_download:
@@ -288,21 +285,9 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     if cookies:
         opts["cookiefile"] = str(cookies)
 
-    # HTTP headers with rotating User-Agent
-    opts["http_headers"] = {
-        "User-Agent": get_random_user_agent(),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Cache-Control": "max-age=0",
-    }
+    # NOTE: Do NOT set http_headers manually!
+    # Let curl-cffi handle headers automatically via "impersonate": "chrome"
+    # Manual headers cause fingerprint mismatch (e.g., iPhone UA + Safari impersonate = instant block)
 
     return opts
 
@@ -332,7 +317,8 @@ def analyze_video(request: Request, body: AnalyzeRequest):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(body.url, download=False)
     except Exception as e:
-        logger.warning("Analyze failed")  # No details logged
+        logger.error(f"Analyze failed: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"Could not analyze URL: {e}")
 
     if info is None:
@@ -371,7 +357,8 @@ def download_audio(request: Request, url: str = Query(..., description="Video UR
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
-        logger.warning("Download info fetch failed")
+        logger.error(f"Download info fetch failed: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"Could not fetch URL: {e}")
 
     if info is None:
@@ -400,7 +387,8 @@ def download_audio(request: Request, url: str = Query(..., description="Video UR
             ydl.download([url])
     except Exception as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        logger.warning("Download/conversion failed")
+        logger.error(f"Download/conversion failed: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Download/conversion failed: {e}")
 
     mp3_files = list(Path(tmp_dir).glob("*.mp3"))

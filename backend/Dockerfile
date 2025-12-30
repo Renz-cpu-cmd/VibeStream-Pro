@@ -37,10 +37,10 @@ COPY requirements.txt .
 # Install Python dependencies (includes curl-cffi for TLS impersonation)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# CRITICAL: Install yt-dlp nightly for latest 2025 bypasses
-# The nightly builds have the most up-to-date extractor fixes
-RUN pip install --no-cache-dir --force-reinstall \
-    "yt-dlp[default,curl-cffi] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
+# CRITICAL: Install yt-dlp NIGHTLY for Dec 2025 YouTube bypasses
+# The --pre flag pulls the latest nightly build with up-to-date extractor fixes
+# This is REQUIRED to bypass the Dec 20th 2025 YouTube update affecting Render IPs
+RUN pip install -U --pre "yt-dlp[default,curl-cffi]"
 
 # Verify yt-dlp version
 RUN yt-dlp --version
