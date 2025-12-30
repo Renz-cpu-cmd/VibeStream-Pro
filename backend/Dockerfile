@@ -5,8 +5,16 @@
 
 FROM python:3.11-slim
 
-# Install system dependencies:
-# - build-essential, gcc, python3-dev: C compiler for building Python wheels (diffq, etc.)
+# STEP 1: Install build tools FIRST (required for compiling Python wheels like diffq)
+# Using separate apt-get update to ensure fresh package list
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        python3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# STEP 2: Install system dependencies
 # - ffmpeg: audio/video processing
 # - curl: for installing Deno and Node.js
 # - unzip: for Deno installation
@@ -16,9 +24,6 @@ FROM python:3.11-slim
 # - libsndfile1: for audio-separator (sound file processing)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        build-essential \
-        gcc \
-        python3-dev \
         ffmpeg \
         curl \
         unzip \
@@ -26,14 +31,12 @@ RUN apt-get update && \
         git \
         gnupg \
         libsndfile1 && \
-    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20 LTS (required for youtube-po-token-generator)
 # This enables automatic PO Token generation without manual F12 extraction
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
-    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Verify Node.js installation
@@ -50,6 +53,11 @@ RUN deno --version
 # Set working directory
 WORKDIR /app
 
+# Environment variables for Render free tier (CPU only, no GPU)
+# Prevents ONNX runtime from looking for GPU and crashing
+ENV ONNX_RUNTIME_EXECUTION_PROVIDERS="CPUExecutionProvider"
+ENV PYTHONUNBUFFERED=1
+
 # Copy requirements first for layer caching
 COPY requirements.txt .
 
@@ -57,11 +65,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install yt-dlp STABLE with curl-cffi - force clean install to avoid cached buggy versions
-# --no-cache-dir ensures we get fresh packages every build
 RUN pip install --no-cache-dir -U "yt-dlp[default,curl-cffi]"
 
+# Upgrade setuptools and wheel BEFORE audio-separator to handle wheel building better
+# This helps avoid gcc dependency issues with packages like diffq
+RUN pip install --no-cache-dir --upgrade setuptools wheel
+
 # Install audio-separator for AI-based vocal removal (Minus One / Karaoke feature)
-# Uses UVR (Ultimate Vocal Remover) models via ONNX runtime
+# Uses UVR (Ultimate Vocal Remover) models via ONNX runtime (CPU mode)
 RUN pip install --no-cache-dir audio-separator[cpu]
 
 # Install youtube-po-token-generator via NPM (NOT pip - it's an NPM package)
@@ -89,9 +100,6 @@ COPY pyproject.toml .
 
 # Expose port
 EXPOSE 8000
-
-# Disable Python buffering for real-time logs
-ENV PYTHONUNBUFFERED=1
 
 # Start uvicorn server
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--access-log"]
