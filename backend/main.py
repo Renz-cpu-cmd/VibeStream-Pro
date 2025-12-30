@@ -233,8 +233,9 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     sleep_max = 8
     
     opts: dict = {
-        "quiet": True,
-        "no_warnings": True,
+        "verbose": True,  # Enable verbose logging to see exact errors
+        "quiet": False,   # Disable quiet mode for debugging
+        "no_warnings": False,  # Show warnings for debugging
         "no_color": True,
         # Privacy: don't cache or store anything
         "cachedir": False,
