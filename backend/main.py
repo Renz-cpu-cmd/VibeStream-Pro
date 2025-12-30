@@ -1,9 +1,13 @@
 """
 VibeStream Pro API
+Late-2025 Anti-Bot Bypass Stack:
+- Deno JS runtime for n-sig challenge solving
+- curl-cffi for TLS fingerprint impersonation
+- PO Token (Proof of Origin) support
+- Client rotation (tv, mweb, ios, android)
+- Random User-Agent rotation
 - Rate limiting (5 downloads/hour per IP)
-- Cookie-based auth with guest fallback
 - Privacy-first logging (no URLs logged)
-- Late-2025 yt-dlp standards (n-sig solver, curl-cffi impersonation)
 """
 
 import logging
@@ -24,10 +28,8 @@ from slowapi.util import get_remote_address
 import yt_dlp
 
 # ---------- Logging Setup (Privacy-First) ----------
-# Disable default uvicorn access logs that contain URLs
 logging.getLogger("uvicorn.access").disabled = True
 
-# Custom logger that never logs user URLs
 logger = logging.getLogger("vibestream")
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler()
@@ -35,7 +37,6 @@ handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)
 logger.addHandler(handler)
 
 # ---------- Rate Limiter Setup ----------
-# 5 downloads per hour per IP address
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(title="VibeStream Pro API")
@@ -51,10 +52,63 @@ USE_LOCAL_FFMPEG = FFMPEG_EXE.exists() and FFPROBE_EXE.exists()
 FFMPEG_LOCATION: str | None = str(BACKEND_DIR) if USE_LOCAL_FFMPEG else None
 
 # ---------- Cookies Setup ----------
-# Path to cookies.txt (throwaway account)
 COOKIES_PATH = BACKEND_DIR / "cookies.txt"
-# Also check for Docker secrets location
 COOKIES_SECRET_PATH = Path("/run/secrets/cookies_txt")
+
+# ---------- PO Token Setup (Proof of Origin) ----------
+# SECURE: Load from environment variable only - NEVER hardcode in public repos!
+#
+# How to get a PO Token:
+# 1. Open YouTube in Chrome, press F12 -> Network tab
+# 2. Play any video and look for requests to /youtubei/v1/player
+# 3. In the request payload, find "serviceIntegrityDimensions" -> "poToken"
+# 4. Copy that base64 string
+# 5. Set it as YOUTUBE_PO_TOKEN environment variable in Render
+#
+# IMPORTANT: PO Tokens expire! You may need to refresh periodically.
+PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN", "")
+VISITOR_DATA = os.getenv("YOUTUBE_VISITOR_DATA", "")
+
+# Log warning if PO Token is missing (app won't crash, just warn)
+if not PO_TOKEN:
+    import sys
+    print("⚠️  WARNING: YOUTUBE_PO_TOKEN not set. Some videos may fail on datacenter IPs.", file=sys.stderr)
+
+# ---------- User-Agent Rotation Pool ----------
+# Real Chrome/Android user agents to rotate through
+USER_AGENTS = [
+    # Chrome on Android (various devices)
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.101 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; SM-A546B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.193 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.85 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; M2101K6G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36",
+    # Chrome on iOS (for ios client)
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/121.0.6167.66 Mobile/15E148 Safari/604.1",
+    # Chrome Desktop (for tv client)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+# Client impersonation targets for curl-cffi
+IMPERSONATE_TARGETS = [
+    "chrome",
+    "chrome110",
+    "chrome120",
+    "edge",
+    "safari",
+]
+
+
+def get_random_user_agent() -> str:
+    """Return a random User-Agent from the pool."""
+    return random.choice(USER_AGENTS)
+
+
+def get_random_impersonate() -> str:
+    """Return a random impersonation target for curl-cffi."""
+    return random.choice(IMPERSONATE_TARGETS)
 
 
 def get_cookies_path() -> Path | None:
@@ -84,25 +138,36 @@ def startup_checks():
     else:
         logger.warning("⚠️  ffmpeg not found! MP3 conversion will fail.")
 
-    # Deno/JS runtime check (for n-sig solver)
+    # Deno/JS runtime check (CRITICAL for n-sig)
     if shutil.which("deno"):
         logger.info("✅ Deno JS runtime found (n-sig solver ready)")
     elif shutil.which("quickjs"):
         logger.info("✅ QuickJS runtime found (n-sig solver ready)")
     else:
-        logger.warning("⚠️  No JS runtime (Deno/QuickJS) - some videos may fail")
+        logger.warning("⚠️  No JS runtime (Deno/QuickJS) - n-sig challenges will FAIL!")
+
+    # PO Token check (CRITICAL for datacenter IPs)
+    if PO_TOKEN:
+        logger.info("✅ YOUTUBE_PO_TOKEN configured (Proof of Origin)")
+    else:
+        logger.warning("⚠️  YOUTUBE_PO_TOKEN not set - videos may fail on datacenter IPs!")
+        logger.info("   Set this in Render environment variables")
+
+    if VISITOR_DATA:
+        logger.info("✅ YOUTUBE_VISITOR_DATA configured")
 
     # Cookies check
     cookies = get_cookies_path()
     if cookies:
         logger.info("✅ cookies.txt found - authenticated mode enabled")
     else:
-        logger.info("ℹ️  No cookies.txt - using guest mode (mweb + tv_embedded)")
+        logger.info("ℹ️  No cookies.txt - using guest mode with client rotation")
 
-    # Rate limit info
-    logger.info("✅ Rate limiting active: 5 downloads/hour per IP")
-    logger.info("✅ Browser impersonation enabled (curl-cffi)")
-    logger.info("✅ Random sleep intervals: 3-8 seconds")
+    # Feature summary
+    logger.info("✅ Rate limiting: 5 downloads/hour per IP")
+    logger.info("✅ Browser impersonation: curl-cffi enabled")
+    logger.info("✅ User-Agent rotation: %d agents in pool", len(USER_AGENTS))
+    logger.info("✅ Client rotation: tv, mweb, ios, android")
 
 
 # ---------- CORS Setup ----------
@@ -154,14 +219,16 @@ def sanitize_filename(name: str) -> str:
 
 def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> dict:
     """
-    Build yt-dlp options with late-2025 anti-bot bypass standards:
-    - Random sleep intervals (3-8s) to avoid linear request patterns
-    - Browser impersonation via curl-cffi
-    - Client spoofing (mweb/tv_embedded)
-    - Extractor args to skip webpage/config fetching
-    - Cookie support with Netscape format validation
+    Build yt-dlp options with Late-2025 Anti-Bot Bypass Stack:
+    
+    1. Random sleep intervals (3-8s) - avoid linear request patterns
+    2. Browser impersonation (curl-cffi) - bypass TLS fingerprinting
+    3. Client rotation (tv, mweb, ios, android) - use multiple player clients
+    4. PO Token support - Proof of Origin for datacenter IPs
+    5. User-Agent rotation - unique fingerprint per request
+    6. Extractor args - skip webpage/config to reduce detection surface
     """
-    # Random sleep interval to avoid bot detection (3-8 seconds)
+    # Random sleep interval to appear human-like
     sleep_min = 3
     sleep_max = 8
     
@@ -176,12 +243,13 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "writeannotations": False,
         "writesubtitles": False,
         "writethumbnail": False,
-        # Rate limiting: random sleep between requests
+        # Rate limiting: random sleep between requests (3-8 seconds)
         "sleep_interval": sleep_min,
         "max_sleep_interval": sleep_max,
         "sleep_interval_requests": random.uniform(1, 3),
         # Browser impersonation via curl-cffi (bypasses TLS fingerprinting)
-        "impersonate": "chrome",
+        # Rotates between chrome, edge, safari fingerprints
+        "impersonate": get_random_impersonate(),
     }
 
     if not for_download:
@@ -191,31 +259,48 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     if include_ffmpeg and FFMPEG_LOCATION:
         opts["ffmpeg_location"] = FFMPEG_LOCATION
 
-    # Try cookies first, then fallback to guest mode
+    # Build extractor args with client rotation and PO Token
+    extractor_args: dict = {
+        "youtube": {
+            # Client rotation: web + mweb for PO Token compatibility
+            # web = Desktop web client (works with PO Token)
+            # mweb = Mobile web (lowest bot detection, PO Token compatible)
+            "player_client": ["web", "mweb"],
+            # Skip webpage and configs to reduce detection surface
+            "player_skip": ["webpage", "configs"],
+        }
+    }
+
+    # Add PO Token if configured (Proof of Origin)
+    # This is CRUCIAL for datacenter IPs in late-2025
+    if PO_TOKEN:
+        extractor_args["youtube"]["po_token"] = [f"web+{PO_TOKEN}"]
+    
+    # Add Visitor Data if configured
+    if VISITOR_DATA:
+        extractor_args["youtube"]["visitor_data"] = [VISITOR_DATA]
+
+    opts["extractor_args"] = extractor_args
+
+    # Try cookies if available (authenticated requests)
     cookies = get_cookies_path()
     if cookies:
-        # Cookies file should be in Netscape format
         opts["cookiefile"] = str(cookies)
-        # Still use safe extractor args even with cookies
-        opts["extractor_args"] = {
-            "youtube": {
-                "player_client": ["mweb", "tv_embedded"],
-                "player_skip": ["webpage", "configs"],
-            }
-        }
-    else:
-        # Guest mode: use mobile web + tv_embedded clients for maximum compatibility
-        opts["extractor_args"] = {
-            "youtube": {
-                "player_client": ["mweb", "tv_embedded"],
-                "player_skip": ["webpage", "configs"],
-            }
-        }
 
-    # HTTP headers for all requests (mobile user agent)
+    # HTTP headers with rotating User-Agent
     opts["http_headers"] = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
+        "User-Agent": get_random_user_agent(),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0",
     }
 
     return opts

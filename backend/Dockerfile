@@ -1,24 +1,28 @@
 # VibeStream Pro Backend
 # Python 3.11 + ffmpeg + Deno (JS runtime for yt-dlp n-sig solver)
+# Late-2025 Anti-Bot Bypass Stack
 
 FROM python:3.11-slim
 
 # Install system dependencies:
 # - ffmpeg: audio/video processing
-# - curl: for installing Deno
+# - curl: for installing Deno and yt-dlp nightly
 # - unzip: for Deno installation
 # - ca-certificates: for HTTPS requests
+# - git: for yt-dlp nightly builds
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         curl \
         unzip \
-        ca-certificates && \
+        ca-certificates \
+        git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Deno (JavaScript runtime for yt-dlp n-sig challenge solver)
-# yt-dlp 2024.12+ requires an external JS runtime (Deno, QuickJS, or PhantomJS)
+# REQUIRED for late-2025: YouTube uses JS-based signature challenges
+# that MUST be solved by an external runtime on datacenter IPs
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 # Verify Deno installation
@@ -30,9 +34,16 @@ WORKDIR /app
 # Copy requirements first for layer caching
 COPY requirements.txt .
 
-# Install Python dependencies
-# yt-dlp with curl-cffi for browser impersonation (bypass TLS fingerprinting)
+# Install Python dependencies (includes curl-cffi for TLS impersonation)
 RUN pip install --no-cache-dir -r requirements.txt
+
+# CRITICAL: Install yt-dlp nightly for latest 2025 bypasses
+# The nightly builds have the most up-to-date extractor fixes
+RUN pip install --no-cache-dir --force-reinstall \
+    "yt-dlp[default,curl-cffi] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
+
+# Verify yt-dlp version
+RUN yt-dlp --version
 
 # Copy application code (excluding cookies.txt for security)
 COPY main.py .
@@ -54,5 +65,5 @@ EXPOSE 8000
 # Disable Python buffering for real-time logs
 ENV PYTHONUNBUFFERED=1
 
-# Start uvicorn server with minimal logging (no access logs for privacy)
+# Start uvicorn server
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--access-log"]
