@@ -22,7 +22,6 @@ Advanced Personalization:
 
 import logging
 import os
-import random
 import re
 import shutil
 import subprocess
@@ -76,71 +75,8 @@ FFPROBE_EXE = BACKEND_DIR / "ffprobe.exe"
 USE_LOCAL_FFMPEG = FFMPEG_EXE.exists() and FFPROBE_EXE.exists()
 FFMPEG_LOCATION: str | None = str(BACKEND_DIR) if USE_LOCAL_FFMPEG else None
 
-# ---------- Cookies Setup ----------
-COOKIES_PATH = BACKEND_DIR / "cookies.txt"
-COOKIES_SECRET_PATH = Path("/run/secrets/cookies_txt")
-COOKIES_RENDER_PATH = Path("/etc/secrets/cookies.txt")  # Render's secret file path
-
-# ---------- Guest Mode Setup (High-Stability Late-2025) ----------
-# No cookies, no PO tokens - pure guest mode with TV + Android clients
-# These clients are most permissive for datacenter IPs as of December 2025
-
-# Optional: Static visitor_data can be set for consistency, otherwise yt-dlp generates one
-STATIC_VISITOR_DATA = os.getenv("YOUTUBE_VISITOR_DATA", "")
 
 
-# ---------- User-Agent Rotation Pool ----------
-# Real Chrome/Android user agents to rotate through
-USER_AGENTS = [
-    # Chrome on Android (various devices)
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.101 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; SM-A546B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.193 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.85 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; M2101K6G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36",
-    # Chrome on iOS (for ios client)
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/121.0.6167.66 Mobile/15E148 Safari/604.1",
-    # Chrome Desktop (for tv client)
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-]
-
-# Client impersonation targets for curl-cffi
-IMPERSONATE_TARGETS = [
-    "chrome",
-    "chrome110",
-    "chrome120",
-    "edge",
-    "safari",
-]
-
-
-def get_random_user_agent() -> str:
-    """Return a random User-Agent from the pool."""
-    return random.choice(USER_AGENTS)
-
-
-def get_random_impersonate() -> str:
-    """Return a random impersonation target for curl-cffi."""
-    return random.choice(IMPERSONATE_TARGETS)
-
-
-def get_cookies_path() -> Path | None:
-    """Return cookies path if exists, checking Render secrets, Docker secrets, then local."""
-    # Priority 1: Render secret file path
-    if COOKIES_RENDER_PATH.exists():
-        logger.info("🍪 Using cookies from /etc/secrets/cookies.txt (Render)")
-        return COOKIES_RENDER_PATH
-    # Priority 2: Docker secrets path
-    if COOKIES_SECRET_PATH.exists():
-        logger.info("🍪 Using cookies from /run/secrets/cookies_txt (Docker)")
-        return COOKIES_SECRET_PATH
-    # Priority 3: Local cookies file
-    if COOKIES_PATH.exists():
-        logger.info("🍪 Using cookies from local cookies.txt")
-        return COOKIES_PATH
-    return None
 
 
 def ffmpeg_available() -> bool:
@@ -164,29 +100,13 @@ def startup_checks():
     # Deno/JS runtime check (CRITICAL for n-sig)
     if shutil.which("deno"):
         logger.info("✅ Deno JS runtime found (n-sig solver ready)")
-    elif shutil.which("quickjs"):
-        logger.info("✅ QuickJS runtime found (n-sig solver ready)")
     else:
-        logger.warning("⚠️  No JS runtime (Deno/QuickJS) - n-sig challenges will FAIL!")
-
-    # Guest Mode info
-    logger.info("📺 Guest Mode: TV + Android clients (high-stability)")
-    if STATIC_VISITOR_DATA:
-        logger.info("✅ Static visitor_data configured")
-    else:
-        logger.info("ℹ️  No static visitor_data - yt-dlp will auto-generate")
-
-    # Cookies check (optional, not required for TV/Android)
-    cookies = get_cookies_path()
-    if cookies:
-        logger.info("ℹ️  cookies.txt found (optional, TV/Android don't need it)")
-    else:
-        logger.info("✅ Pure Guest Mode - no cookies needed")
+        logger.warning("⚠️  No JS runtime (Deno) - n-sig challenges may FAIL!")
 
     # Feature summary
-    logger.info("✅ Rate limiting: 5 downloads/hour per IP")
-    logger.info("✅ Browser impersonation: curl-cffi (chrome)")
+    logger.info("📺 Pure Guest Mode: TV + Android clients")
     logger.info("✅ Web Integrity bypass: skip webpage/configs/dash/hls")
+    logger.info("✅ Rate limiting: 5 downloads/hour per IP")
 
 
 # ---------- CORS Setup ----------
@@ -238,91 +158,42 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()[:100]
 
 
-def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> tuple[dict, bool]:
+def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> dict:
     """
-    Build yt-dlp options with Late-2025 High-Stability Guest Mode:
+    Build yt-dlp options with Late-2025 High-Stability Pure Guest Mode.
     
-    1. TV + Android clients (most permissive for guest requests December 2025)
-    2. Web Integrity bypass (skip webpage, configs, dash, hls)
-    3. Random sleep intervals (5-10s) - avoid linear request patterns
-    4. curl-cffi for TLS fingerprint impersonation
-    5. No cookies, no PO tokens - pure guest mode
+    Key settings (December 2025):
+    - TV + Android clients (most permissive for datacenter IPs)
+    - Web Integrity bypass (skip webpage/configs/dash/hls)
+    - curl-cffi for TLS fingerprint impersonation
+    - NO cookies, NO PO tokens - pure guest mode
     """
     opts: dict = {
-        "verbose": True,  # Enable verbose logging to see exact errors
-        "logger": logger,  # Use our custom logger
-        "quiet": False,   # Disable quiet mode for debugging
-        "no_warnings": False,  # Show warnings for debugging
+        # Core settings
+        "verbose": True,
+        "logger": logger,
         "no_color": True,
-        # Privacy: don't cache or store anything
-        "cachedir": False,
-        "writedescription": False,
-        "writeinfojson": False,
-        "writeannotations": False,
-        "writesubtitles": False,
-        "writethumbnail": False,
-        # Stability: skip format checking for faster metadata analysis
-        "check_formats": False,
-        "file_access_prefs": [],
-        "noplaylist": True,  # Single video only, no playlist expansion
-        # Rate limiting: longer sleep to look less like a bot (5-10 seconds)
-        "sleep_interval": 5,
-        "max_sleep_interval": 10,
-        "sleep_interval_requests": random.uniform(2, 5),
-        # BYPASS AssertionError: Set impersonate to None and use curl_cffi handler directly
-        # This completely bypasses the buggy _impersonate_target_available check
+        "noplaylist": True,
+        # Pure Guest Mode: NO impersonate, use curl_cffi directly
         "impersonate": None,
         "request_handler": "curl_cffi",
-        # Manual headers since we're bypassing impersonate
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Connection": "keep-alive",
+        # Web Integrity Bypass
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["tv", "android"],
+                "player_skip": ["webpage", "configs"],
+                "skip": ["dash", "hls"],
+            }
         },
     }
 
     if not for_download:
         opts["skip_download"] = True
 
-    # Add ffmpeg location if available
     if include_ffmpeg and FFMPEG_LOCATION:
         opts["ffmpeg_location"] = FFMPEG_LOCATION
 
-    # LATE-2025 HIGH-STABILITY: TV + Android clients
-    # These are the most permissive for guest requests on datacenter IPs (December 2025)
-    # TV client: No Web Integrity API checks
-    # Android client: Mobile app API, very stable for guest mode
-    player_clients = ["tv", "android"]
-    logger.info("📺 Using TV + Android clients (high-stability guest mode)")
-    
-    # Web Integrity Bypass: Skip webpage/configs to avoid detection
-    # Skip dash/hls to force direct format (faster, more reliable)
-    extractor_args: dict = {
-        "youtube": {
-            "player_client": player_clients,
-            "player_skip": ["webpage", "configs"],
-            "skip": ["dash", "hls"],
-        }
-    }
-
-    # Add static visitor_data if configured (optional, for consistency)
-    if STATIC_VISITOR_DATA:
-        extractor_args["youtube"]["visitor_data"] = [STATIC_VISITOR_DATA]
-        logger.info("🎫 Using static visitor_data")
-    else:
-        logger.info("🎫 No static visitor_data - yt-dlp will auto-generate guest token")
-
-    opts["extractor_args"] = extractor_args
-
-    # Cookies are OPTIONAL for TV/Android clients (not required for guest mode)
-    # Only add if explicitly available, but don't fail without them
-    cookies = get_cookies_path()
-    if cookies:
-        opts["cookiefile"] = str(cookies)
-        logger.info("🍪 Cookies available (optional, not required for TV/Android)")
-
-    return opts, cookies is not None  # Return whether cookies are being used
+    return opts
 
 
 # ---------- URL/Search Detection ----------
@@ -577,75 +448,28 @@ def root():
 def analyze_video(request: Request, body: AnalyzeRequest):
     """
     Extract metadata (title, thumbnail, duration) for a given video URL or search query.
-    If input is not a URL, searches YouTube using ytsearch:.
-    Self-healing: invalidates auto token cache on failure to force regeneration.
+    If input is not a URL, searches YouTube using ytsearch1:.
+    Pure Guest Mode - no cookies, no tokens.
     """
     logger.info("Analyze request received")  # No URL logged for privacy
 
-    # Prepare URL (add ytsearch: prefix if it's a search query)
+    # Prepare URL (add ytsearch1: prefix if it's a search query)
     prepared_url = prepare_url(body.url)
 
-    ydl_opts, has_cookies = build_ydl_opts(for_download=False)
-    
-    # Cookie expiration patterns that trigger guest mode fallback
-    cookie_expired_patterns = [
-        "cookies are no longer valid",
-        "sign in to confirm",
-        "confirm you're not a bot",
-        "please sign in",
-        "login required",
-    ]
-
+    ydl_opts = build_ydl_opts(for_download=False)
     info = None
-    retry_without_cookies = False
-    
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # CRITICAL: Patch cookiejar.save to prevent write attempts to read-only filesystem
-            if has_cookies and hasattr(ydl, 'cookiejar'):
-                ydl.cookiejar.save = lambda *args, **kwargs: None
             info = ydl.extract_info(prepared_url, download=False)
             
             # For search results, get the first entry
             if info and "entries" in info:
                 entries = list(info["entries"])
-                if entries:
-                    info = entries[0]
-                else:
-                    info = None
+                info = entries[0] if entries else None
     except Exception as e:
-        error_str = str(e).lower()
         logger.error(f"Analyze failed: {e}")
-        
-        # Check if cookies expired - retry in guest mode
-        if any(pattern in error_str for pattern in cookie_expired_patterns):
-            logger.warning("🍪 Cookies expired! Retrying in Guest Mode...")
-            retry_without_cookies = True
-        else:
-            # Self-healing: if it looks like a token/auth error, invalidate cache
-            if any(keyword in error_str for keyword in ["403", "forbidden", "bot", "token"]):
-                invalidate_auto_token()
-                logger.info("🔄 Self-healing triggered - token cache invalidated")
-            raise HTTPException(status_code=400, detail=f"Could not analyze: {e}")
-    
-    # Retry without cookies (Guest Mode)
-    if retry_without_cookies or info is None:
-        logger.info("👤 Attempting Guest Mode (no cookies)...")
-        try:
-            # Build opts without cookies
-            guest_opts, _ = build_ydl_opts(for_download=False)
-            guest_opts.pop("cookiefile", None)  # Remove cookies
-            
-            with yt_dlp.YoutubeDL(guest_opts) as ydl:
-                info = ydl.extract_info(prepared_url, download=False)
-                
-                if info and "entries" in info:
-                    entries = list(info["entries"])
-                    info = entries[0] if entries else None
-        except Exception as e2:
-            logger.error(f"Guest mode also failed: {e2}")
-            invalidate_auto_token()
-            raise HTTPException(status_code=400, detail=f"Could not analyze (tried Guest Mode): {e2}")
+        raise HTTPException(status_code=400, detail=f"Could not analyze: {e}")
 
     if info is None:
         raise HTTPException(status_code=400, detail="No results found")
@@ -687,6 +511,7 @@ def download_audio(
     - Metadata embedding: Cover art, title, artist automatically added
     
     Rate limited to 5 downloads per hour per IP.
+    Pure Guest Mode - no cookies, no tokens.
     """
     logger.info(f"Download request received (mode: {mode}, trim: {start_time}-{end_time})")
 
@@ -696,70 +521,24 @@ def download_audio(
             detail="ffmpeg not found. Server configuration error.",
         )
 
-    # Prepare URL (add ytsearch: prefix if it's a search query)
+    # Prepare URL (add ytsearch1: prefix if it's a search query)
     prepared_url = prepare_url(url)
-    
-    # Cookie expiration patterns that trigger guest mode fallback
-    cookie_expired_patterns = [
-        "cookies are no longer valid",
-        "sign in to confirm",
-        "confirm you're not a bot",
-        "please sign in",
-        "login required",
-    ]
 
     # First, get video info
-    ydl_opts, has_cookies = build_ydl_opts(for_download=False, include_ffmpeg=True)
-    
+    ydl_opts = build_ydl_opts(for_download=False, include_ffmpeg=True)
     info = None
-    use_guest_mode = False
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # CRITICAL: Patch cookiejar.save to prevent write attempts to read-only filesystem
-            if has_cookies and hasattr(ydl, 'cookiejar'):
-                ydl.cookiejar.save = lambda *args, **kwargs: None
             info = ydl.extract_info(prepared_url, download=False)
             
             # For search results, get the first entry
             if info and "entries" in info:
                 entries = list(info["entries"])
-                if entries:
-                    info = entries[0]
-                else:
-                    info = None
+                info = entries[0] if entries else None
     except Exception as e:
-        error_str = str(e).lower()
         logger.error(f"Download info fetch failed: {e}")
-        
-        # Check if cookies expired - retry in guest mode
-        if any(pattern in error_str for pattern in cookie_expired_patterns):
-            logger.warning("🍪 Cookies expired! Retrying in Guest Mode...")
-            use_guest_mode = True
-        else:
-            # Self-healing: if it looks like a token/auth error, invalidate cache
-            if any(keyword in error_str for keyword in ["403", "forbidden", "bot", "token"]):
-                invalidate_auto_token()
-                logger.info("🔄 Self-healing triggered - token cache invalidated")
-            raise HTTPException(status_code=400, detail=f"Could not fetch: {e}")
-
-    # Retry in guest mode if needed
-    if use_guest_mode or info is None:
-        logger.info("👤 Attempting Guest Mode (no cookies)...")
-        try:
-            guest_opts, _ = build_ydl_opts(for_download=False, include_ffmpeg=True)
-            guest_opts.pop("cookiefile", None)
-            
-            with yt_dlp.YoutubeDL(guest_opts) as ydl:
-                info = ydl.extract_info(prepared_url, download=False)
-                
-                if info and "entries" in info:
-                    entries = list(info["entries"])
-                    info = entries[0] if entries else None
-        except Exception as e2:
-            logger.error(f"Guest mode also failed: {e2}")
-            invalidate_auto_token()
-            raise HTTPException(status_code=400, detail=f"Could not fetch (tried Guest Mode): {e2}")
+        raise HTTPException(status_code=400, detail=f"Could not fetch: {e}")
 
     if info is None:
         raise HTTPException(status_code=400, detail="No results found")
@@ -782,7 +561,7 @@ def download_audio(
     tmp_dir = tempfile.mkdtemp()
     tmp_path = Path(tmp_dir)
 
-    ydl_download_opts, has_cookies_dl = build_ydl_opts(for_download=True, include_ffmpeg=True)
+    ydl_download_opts = build_ydl_opts(for_download=True, include_ffmpeg=True)
     ydl_download_opts.update({
         "format": "bestaudio/best",
         "outtmpl": str(tmp_path / "%(title)s.%(ext)s"),
@@ -794,50 +573,14 @@ def download_audio(
             }
         ],
     })
-    
-    # If we already switched to guest mode for info, use it for download too
-    if use_guest_mode:
-        ydl_download_opts.pop("cookiefile", None)
 
-    download_success = False
     try:
         with yt_dlp.YoutubeDL(ydl_download_opts) as ydl:
-            # CRITICAL: Patch cookiejar.save to prevent write attempts to read-only filesystem
-            if has_cookies_dl and hasattr(ydl, 'cookiejar') and not use_guest_mode:
-                ydl.cookiejar.save = lambda *args, **kwargs: None
             ydl.download([actual_url])
-            download_success = True
     except Exception as e:
-        error_str = str(e).lower()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         logger.error(f"Download/conversion failed: {e}")
-        
-        # Try guest mode if cookies expired during download
-        if any(pattern in error_str for pattern in cookie_expired_patterns) and not use_guest_mode:
-            logger.warning("🍪 Cookies expired during download! Retrying in Guest Mode...")
-            try:
-                guest_dl_opts, _ = build_ydl_opts(for_download=True, include_ffmpeg=True)
-                guest_dl_opts.pop("cookiefile", None)
-                guest_dl_opts.update({
-                    "format": "bestaudio/best",
-                    "outtmpl": str(tmp_path / "%(title)s.%(ext)s"),
-                    "postprocessors": [
-                        {
-                            "key": "FFmpegExtractAudio",
-                            "preferredcodec": "mp3",
-                            "preferredquality": "192",
-                        }
-                    ],
-                })
-                with yt_dlp.YoutubeDL(guest_dl_opts) as ydl:
-                    ydl.download([actual_url])
-                    download_success = True
-            except Exception as e2:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-                logger.error(f"Guest mode download also failed: {e2}")
-                raise HTTPException(status_code=500, detail=f"Download failed (tried Guest Mode): {e2}")
-        else:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise HTTPException(status_code=500, detail=f"Download/conversion failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Download/conversion failed: {e}")
 
     mp3_files = list(tmp_path.glob("*.mp3"))
     if not mp3_files:
