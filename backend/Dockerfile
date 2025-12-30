@@ -49,10 +49,10 @@ COPY requirements.txt .
 # Install Python dependencies (includes curl-cffi for TLS impersonation)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# CRITICAL: Install yt-dlp NIGHTLY for Dec 2025 YouTube bypasses
-# The --pre flag pulls the latest nightly build with up-to-date extractor fixes
-# This is REQUIRED to bypass the Dec 20th 2025 YouTube update affecting Render IPs
-RUN pip install -U --pre "yt-dlp[default,curl-cffi]"
+# Install yt-dlp STABLE with curl-cffi for browser impersonation
+# Using stable version to avoid nightly bugs in impersonation type-check
+# The stable version has tested networking layer that works with impersonate option
+RUN pip install -U "yt-dlp[default,curl-cffi]"
 
 # Install youtube-po-token-generator via NPM (NOT pip - it's an NPM package)
 # This makes the backend 'self-healing' - no manual token extraction needed
