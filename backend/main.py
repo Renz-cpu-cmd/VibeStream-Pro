@@ -8,6 +8,12 @@ Late-2025 Anti-Bot Bypass Stack:
 - Random User-Agent rotation
 - Rate limiting (5 downloads/hour per IP)
 - Privacy-first logging (no URLs logged)
+
+Pro Audio Features:
+- Standard MP3: Basic audio extraction
+- Minus One (Karaoke): AI vocal removal using audio-separator
+- Bass Boosted: +10dB low frequency enhancement
+- Nightcore: 1.25x speed + pitch up
 """
 
 import logging
@@ -15,9 +21,12 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import tempfile
 import traceback
+from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -427,6 +436,135 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     return opts, cookies is not None  # Return whether cookies are being used
 
 
+# ---------- Audio Processing Functions ----------
+AudioMode = Literal["standard", "minus_one", "bass_boost", "nightcore"]
+
+
+def apply_bass_boost(input_path: Path, output_path: Path) -> bool:
+    """
+    Apply bass boost using FFmpeg equalizer filter.
+    Boosts frequencies below 200Hz by 10dB.
+    """
+    logger.info("🔊 Applying bass boost...")
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", str(input_path),
+            "-af", "bass=g=10:f=110:w=0.6",
+            "-c:a", "libmp3lame", "-q:a", "2",
+            str(output_path)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.error(f"Bass boost failed: {result.stderr}")
+            return False
+        logger.info("✅ Bass boost applied successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Bass boost error: {e}")
+        return False
+
+
+def apply_nightcore(input_path: Path, output_path: Path) -> bool:
+    """
+    Apply nightcore effect: speed up by 1.25x and pitch up.
+    Uses atempo + asetrate for the classic nightcore sound.
+    """
+    logger.info("⚡ Applying nightcore effect...")
+    try:
+        # Nightcore: increase tempo by 25% and pitch by changing sample rate
+        cmd = [
+            "ffmpeg", "-y", "-i", str(input_path),
+            "-af", "asetrate=44100*1.25,aresample=44100,atempo=1.0",
+            "-c:a", "libmp3lame", "-q:a", "2",
+            str(output_path)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.error(f"Nightcore failed: {result.stderr}")
+            return False
+        logger.info("✅ Nightcore effect applied successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Nightcore error: {e}")
+        return False
+
+
+def apply_vocal_removal(input_path: Path, output_dir: Path) -> Path | None:
+    """
+    Remove vocals using audio-separator (AI-based vocal isolation).
+    Returns path to instrumental track, or None on failure.
+    
+    Uses the UVR-MDX-NET-Inst_HQ_3 model for high-quality instrumental extraction.
+    """
+    logger.info("🎤 Starting AI vocal removal... (this may take 1-2 minutes)")
+    try:
+        # audio-separator outputs to a folder, creates files like:
+        # - input_(Instrumental)_model.wav
+        # - input_(Vocals)_model.wav
+        cmd = [
+            "audio-separator",
+            str(input_path),
+            "--model_filename", "UVR-MDX-NET-Inst_HQ_3.onnx",
+            "--output_dir", str(output_dir),
+            "--output_format", "mp3",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 min timeout
+        
+        if result.returncode != 0:
+            logger.error(f"Vocal removal failed: {result.stderr}")
+            return None
+        
+        # Find the instrumental file (contains "Instrumental" in filename)
+        instrumental_files = list(output_dir.glob("*(Instrumental)*.mp3"))
+        if not instrumental_files:
+            # Try alternative naming pattern
+            instrumental_files = list(output_dir.glob("*instrumental*.mp3"))
+        
+        if not instrumental_files:
+            logger.error("No instrumental file found after vocal removal")
+            return None
+        
+        logger.info("✅ Vocal removal completed successfully")
+        return instrumental_files[0]
+    except subprocess.TimeoutExpired:
+        logger.error("❌ Vocal removal timed out (exceeded 5 minutes)")
+        return None
+    except Exception as e:
+        logger.error(f"Vocal removal error: {e}")
+        return None
+
+
+def process_audio(input_path: Path, output_dir: Path, mode: AudioMode, title: str) -> Path | None:
+    """
+    Process audio based on selected mode.
+    Returns path to processed file, or None on failure.
+    """
+    if mode == "standard":
+        # No processing needed, return original
+        return input_path
+    
+    elif mode == "bass_boost":
+        output_path = output_dir / f"{title}_bass_boosted.mp3"
+        if apply_bass_boost(input_path, output_path):
+            return output_path
+        return None
+    
+    elif mode == "nightcore":
+        output_path = output_dir / f"{title}_nightcore.mp3"
+        if apply_nightcore(input_path, output_path):
+            return output_path
+        return None
+    
+    elif mode == "minus_one":
+        # Vocal removal outputs to a subdirectory
+        separator_output = output_dir / "separated"
+        separator_output.mkdir(exist_ok=True)
+        result = apply_vocal_removal(input_path, separator_output)
+        return result
+    
+    return None
+
+
 # ---------- Routes ----------
 @app.get("/health")
 def health_check():
@@ -483,12 +621,23 @@ def analyze_video(request: Request, body: AnalyzeRequest):
 
 @app.get("/download")
 @limiter.limit("5/hour")  # 5 downloads per hour per IP
-def download_audio(request: Request, url: str = Query(..., description="Video URL")):
+def download_audio(
+    request: Request,
+    url: str = Query(..., description="Video URL"),
+    mode: AudioMode = Query("standard", description="Audio processing mode")
+):
     """
-    Stream the audio (MP3) of the given video URL.
+    Stream the audio (MP3) of the given video URL with optional processing.
+    
+    Modes:
+    - standard: Basic MP3 extraction
+    - bass_boost: +10dB bass enhancement
+    - nightcore: 1.25x speed + pitch up
+    - minus_one: AI vocal removal (karaoke)
+    
     Rate limited to 5 downloads per hour per IP.
     """
-    logger.info("Download request received")  # No URL logged for privacy
+    logger.info(f"Download request received (mode: {mode})")  # No URL logged for privacy
 
     if not ffmpeg_available():
         raise HTTPException(
@@ -524,11 +673,12 @@ def download_audio(request: Request, url: str = Query(..., description="Video UR
 
     # Download to temp file
     tmp_dir = tempfile.mkdtemp()
+    tmp_path = Path(tmp_dir)
 
     ydl_download_opts, has_cookies_dl = build_ydl_opts(for_download=True, include_ffmpeg=True)
     ydl_download_opts.update({
         "format": "bestaudio/best",
-        "outtmpl": str(Path(tmp_dir) / "%(title)s.%(ext)s"),
+        "outtmpl": str(tmp_path / "%(title)s.%(ext)s"),
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -550,23 +700,47 @@ def download_audio(request: Request, url: str = Query(..., description="Video UR
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Download/conversion failed: {e}")
 
-    mp3_files = list(Path(tmp_dir).glob("*.mp3"))
+    mp3_files = list(tmp_path.glob("*.mp3"))
     if not mp3_files:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail="MP3 conversion failed.")
 
-    mp3_path = mp3_files[0]
-    logger.info("Download successful")
+    original_mp3 = mp3_files[0]
+    logger.info("Download successful, applying audio processing...")
+
+    # Apply audio processing based on mode
+    final_path = process_audio(original_mp3, tmp_path, mode, title)
+    
+    if final_path is None:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Audio processing failed for mode: {mode}"
+        )
+
+    # Determine output filename suffix based on mode
+    mode_suffixes = {
+        "standard": "",
+        "bass_boost": "_bass_boosted",
+        "nightcore": "_nightcore",
+        "minus_one": "_instrumental",
+    }
+    suffix = mode_suffixes.get(mode, "")
+    output_filename = f"{title}{suffix}.mp3"
+
+    logger.info(f"Processing complete, serving file: {output_filename}")
 
     def iterfile():
         try:
-            with open(mp3_path, "rb") as f:
+            with open(final_path, "rb") as f:
                 yield from f
         finally:
+            # IMPORTANT: Clean up ALL temp files after download
             shutil.rmtree(tmp_dir, ignore_errors=True)
+            logger.info("🧹 Temp files cleaned up")
 
     return StreamingResponse(
         iterfile(),
         media_type="audio/mpeg",
-        headers={"Content-Disposition": f'attachment; filename="{title}.mp3"'},
+        headers={"Content-Disposition": f'attachment; filename="{output_filename}"'},
     )

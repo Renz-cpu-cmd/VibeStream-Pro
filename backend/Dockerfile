@@ -1,6 +1,7 @@
 # VibeStream Pro Backend
 # Python 3.11 + ffmpeg + Deno + Node.js (JS runtimes for yt-dlp)
 # Late-2025 Self-Healing Anti-Bot Bypass Stack
+# Pro Audio Features: Bass Boost, Nightcore, AI Vocal Removal
 
 FROM python:3.11-slim
 
@@ -11,6 +12,7 @@ FROM python:3.11-slim
 # - ca-certificates: for HTTPS requests
 # - git: for yt-dlp nightly builds
 # - gnupg: for Node.js repo key
+# - libsndfile1: for audio-separator (sound file processing)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
@@ -18,7 +20,8 @@ RUN apt-get update && \
         unzip \
         ca-certificates \
         git \
-        gnupg && \
+        gnupg \
+        libsndfile1 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -53,12 +56,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # --no-cache-dir ensures we get fresh packages every build
 RUN pip install --no-cache-dir -U "yt-dlp[default,curl-cffi]"
 
+# Install audio-separator for AI-based vocal removal (Minus One / Karaoke feature)
+# Uses UVR (Ultimate Vocal Remover) models via ONNX runtime
+RUN pip install --no-cache-dir audio-separator[cpu]
+
 # Install youtube-po-token-generator via NPM (NOT pip - it's an NPM package)
 # This makes the backend 'self-healing' - no manual token extraction needed
 RUN npm install -g youtube-po-token-generator
 
 # Verify installations
 RUN yt-dlp --version
+RUN audio-separator --help || echo "audio-separator installed"
 RUN youtube-po-token-generator --help || echo "youtube-po-token-generator installed"
 
 # Copy application code (excluding cookies.txt for security)

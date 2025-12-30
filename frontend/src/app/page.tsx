@@ -30,6 +30,7 @@ export default function HomePage() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showDonationModal, setShowDonationModal] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [audioMode, setAudioMode] = useState<"standard" | "minus_one" | "bass_boost" | "nightcore">("standard");
 
   // GCash/Maya number - update with your actual number
   const PAYMENT_NUMBER = "09543718983";
@@ -124,14 +125,20 @@ export default function HomePage() {
   const handleDownload = async () => {
     if (!url.trim()) return;
     setDownloading(true);
-    setDownloadStatus("Connecting to server...");
     setError(null);
 
-    try {
-      setDownloadStatus("Converting to MP3... This may take a moment.");
+    // Dynamic status messages based on audio mode
+    const modeMessages: Record<string, string> = {
+      standard: "Converting to MP3...",
+      minus_one: "🎤 AI is removing vocals... This may take 1-2 minutes.",
+      bass_boost: "🔊 Boosting the bass...",
+      nightcore: "⚡ Creating nightcore version...",
+    };
+    setDownloadStatus(modeMessages[audioMode] || "Processing...");
 
+    try {
       const res = await fetch(
-        `${API_BASE}/download?url=${encodeURIComponent(url)}`
+        `${API_BASE}/download?url=${encodeURIComponent(url)}&mode=${audioMode}`
       );
 
       if (!res.ok) {
@@ -270,6 +277,42 @@ export default function HomePage() {
                   <p className="mt-1 text-sm text-gray-300/80">
                     Duration: {videoInfo.duration_str}
                   </p>
+
+                  {/* Processing Options */}
+                  <div className="mt-4">
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-400">
+                      🎛️ Processing Mode
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { value: "standard", label: "Standard MP3", icon: "🎵", desc: "Original audio" },
+                        { value: "minus_one", label: "Minus One", icon: "🎤", desc: "AI vocal removal" },
+                        { value: "bass_boost", label: "Bass Boosted", icon: "🔊", desc: "+10dB bass" },
+                        { value: "nightcore", label: "Nightcore", icon: "⚡", desc: "1.25x + pitch up" },
+                      ].map((mode) => (
+                        <button
+                          key={mode.value}
+                          type="button"
+                          onClick={() => setAudioMode(mode.value as typeof audioMode)}
+                          disabled={downloading}
+                          className={`flex flex-col items-center rounded-xl border p-3 text-center transition ${
+                            audioMode === mode.value
+                              ? "border-purple-500 bg-purple-500/20 text-white"
+                              : "border-white/10 bg-gray-950/30 text-gray-300 hover:border-white/20 hover:bg-gray-950/50"
+                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                        >
+                          <span className="text-lg">{mode.icon}</span>
+                          <span className="mt-1 text-xs font-semibold">{mode.label}</span>
+                          <span className="text-[10px] text-gray-400">{mode.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {audioMode === "minus_one" && (
+                      <p className="mt-2 text-xs text-amber-300/80">
+                        ⚠️ AI vocal removal takes 1-2 minutes on free tier
+                      </p>
+                    )}
+                  </div>
 
                   <button
                     onClick={handleDownload}
