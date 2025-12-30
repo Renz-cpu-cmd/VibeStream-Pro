@@ -1,11 +1,10 @@
 """
 VibeStream Pro API
-Late-2025 Anti-Bot Bypass Stack:
+Late-2025 High-Stability Guest Mode:
 - Deno JS runtime for n-sig challenge solving
 - curl-cffi for TLS fingerprint impersonation
-- PO Token (Proof of Origin) support
-- Client rotation (tv, mweb, ios, android)
-- Random User-Agent rotation
+- TV + Android clients (most permissive for guest requests)
+- Web Integrity bypass (skip webpage/configs/dash/hls)
 - Rate limiting (5 downloads/hour per IP)
 - Privacy-first logging (no URLs logged)
 
@@ -82,115 +81,12 @@ COOKIES_PATH = BACKEND_DIR / "cookies.txt"
 COOKIES_SECRET_PATH = Path("/run/secrets/cookies_txt")
 COOKIES_RENDER_PATH = Path("/etc/secrets/cookies.txt")  # Render's secret file path
 
-# ---------- PO Token Setup (Proof of Origin) ----------
-# Priority: Manual env var > Auto-generated via CLI
-# Manual: Set YOUTUBE_PO_TOKEN in Render environment variables
-# Auto: Uses youtube-po-token-generator CLI (NPM package) if manual not provided
+# ---------- Guest Mode Setup (High-Stability Late-2025) ----------
+# No cookies, no PO tokens - pure guest mode with TV + Android clients
+# These clients are most permissive for datacenter IPs as of December 2025
 
-MANUAL_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN", "")
-MANUAL_VISITOR_DATA = os.getenv("YOUTUBE_VISITOR_DATA", "")
-
-# Global cache for auto-generated tokens (refreshed on failure)
-_auto_token_cache: dict = {"po_token": None, "visitor_data": None, "generated_at": None}
-
-
-def get_auto_po_token() -> tuple[str | None, str | None]:
-    """
-    Auto-generate PO Token by running youtube-po-token-generator CLI.
-    This is an NPM package that outputs JSON with poToken and visitorData.
-    Returns (po_token, visitor_data) or (None, None) on failure.
-    """
-    global _auto_token_cache
-    import subprocess
-    import json
-    from datetime import datetime
-    
-    try:
-        logger.info("🔄 Generating Auto Token via youtube-po-token-generator CLI...")
-        
-        # Run the NPM CLI tool and capture JSON output
-        result = subprocess.run(
-            ["youtube-po-token-generator"],
-            capture_output=True,
-            text=True,
-            timeout=120  # 120 second timeout (Render free tier can be slow)
-        )
-        
-        if result.returncode != 0:
-            logger.error(f"❌ youtube-po-token-generator failed: {result.stderr}")
-            return None, None
-        
-        # Parse JSON output
-        output = result.stdout.strip()
-        
-        # Handle case where output might have extra text before JSON
-        # Find the first '{' to start of JSON
-        json_start = output.find('{')
-        if json_start == -1:
-            logger.error(f"❌ No JSON found in output: {output[:200]}")
-            return None, None
-        
-        json_str = output[json_start:]
-        token_data = json.loads(json_str)
-        
-        # Extract tokens (handle different key formats)
-        po_token = token_data.get("poToken") or token_data.get("po_token")
-        visitor_data = token_data.get("visitorData") or token_data.get("visitor_data")
-        
-        if po_token:
-            _auto_token_cache["po_token"] = po_token
-            _auto_token_cache["visitor_data"] = visitor_data
-            _auto_token_cache["generated_at"] = datetime.now().isoformat()
-            logger.info("✅ Auto Token generated successfully")
-            return po_token, visitor_data
-        else:
-            logger.warning(f"⚠️ Auto Token generation returned empty token. Output: {output[:200]}")
-            return None, None
-            
-    except FileNotFoundError:
-        logger.warning("⚠️ youtube-po-token-generator CLI not found (npm package not installed)")
-        return None, None
-    except subprocess.TimeoutExpired:
-        logger.error("❌ Auto Token generation timed out after 120 seconds")
-        return None, None
-    except json.JSONDecodeError as e:
-        logger.error(f"❌ Failed to parse JSON from youtube-po-token-generator: {e}")
-        return None, None
-    except Exception as e:
-        logger.error(f"❌ Auto Token generation failed: {e}")
-        return None, None
-
-
-def get_po_token() -> tuple[str | None, str | None, str]:
-    """
-    Get PO Token with priority: Manual > Cached Auto > Fresh Auto > None (guest fallback).
-    Returns (po_token, visitor_data, source_label).
-    """
-    # Priority 1: Manual token from environment variable
-    if MANUAL_PO_TOKEN:
-        logger.info("🔑 Using Manual Token from YOUTUBE_PO_TOKEN env var")
-        return MANUAL_PO_TOKEN, MANUAL_VISITOR_DATA, "manual"
-    
-    # Priority 2: Cached auto-generated token
-    if _auto_token_cache["po_token"]:
-        logger.info("🔑 Using Cached Auto Token")
-        return _auto_token_cache["po_token"], _auto_token_cache["visitor_data"], "auto_cached"
-    
-    # Priority 3: Generate fresh auto token
-    po_token, visitor_data = get_auto_po_token()
-    if po_token:
-        return po_token, visitor_data, "auto_fresh"
-    
-    # No token available - will fallback to mweb guest mode
-    logger.warning("⚠️ No PO Token available - falling back to mweb guest mode")
-    return None, None, "none"
-
-
-def invalidate_auto_token():
-    """Clear cached auto token to force regeneration on next request."""
-    global _auto_token_cache
-    _auto_token_cache = {"po_token": None, "visitor_data": None, "generated_at": None}
-    logger.info("🔄 Auto Token cache invalidated - will regenerate on next request")
+# Optional: Static visitor_data can be set for consistency, otherwise yt-dlp generates one
+STATIC_VISITOR_DATA = os.getenv("YOUTUBE_VISITOR_DATA", "")
 
 
 # ---------- User-Agent Rotation Pool ----------
@@ -273,37 +169,24 @@ def startup_checks():
     else:
         logger.warning("⚠️  No JS runtime (Deno/QuickJS) - n-sig challenges will FAIL!")
 
-    # Node.js check (for youtube-po-token-generator)
-    if shutil.which("node"):
-        logger.info("✅ Node.js found (auto token generation ready)")
+    # Guest Mode info
+    logger.info("📺 Guest Mode: TV + Android clients (high-stability)")
+    if STATIC_VISITOR_DATA:
+        logger.info("✅ Static visitor_data configured")
     else:
-        logger.warning("⚠️  Node.js not found - auto token generation unavailable")
+        logger.info("ℹ️  No static visitor_data - yt-dlp will auto-generate")
 
-    # PO Token check (CRITICAL for datacenter IPs)
-    if MANUAL_PO_TOKEN:
-        logger.info("✅ Using Manual Token from YOUTUBE_PO_TOKEN env var")
-    else:
-        logger.info("ℹ️  No manual YOUTUBE_PO_TOKEN - will use auto-generation")
-        # Verify youtube-po-token-generator CLI is available
-        if shutil.which("youtube-po-token-generator"):
-            logger.info("✅ youtube-po-token-generator CLI available for auto tokens")
-        else:
-            logger.warning("⚠️  youtube-po-token-generator CLI not found (npm install -g youtube-po-token-generator)")
-
-    if MANUAL_VISITOR_DATA:
-        logger.info("✅ YOUTUBE_VISITOR_DATA configured")
-
-    # Cookies check
+    # Cookies check (optional, not required for TV/Android)
     cookies = get_cookies_path()
     if cookies:
-        logger.info("✅ cookies.txt found - authenticated mode enabled")
+        logger.info("ℹ️  cookies.txt found (optional, TV/Android don't need it)")
     else:
-        logger.info("ℹ️  No cookies.txt - using guest mode with client rotation")
+        logger.info("✅ Pure Guest Mode - no cookies needed")
 
     # Feature summary
     logger.info("✅ Rate limiting: 5 downloads/hour per IP")
     logger.info("✅ Browser impersonation: curl-cffi (chrome)")
-    logger.info("✅ Client fallback: mweb → web → android")
+    logger.info("✅ Web Integrity bypass: skip webpage/configs/dash/hls")
 
 
 # ---------- CORS Setup ----------
@@ -357,17 +240,14 @@ def sanitize_filename(name: str) -> str:
 
 def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> tuple[dict, bool]:
     """
-    Build yt-dlp options with Late-2025 Anti-Bot Bypass Stack:
+    Build yt-dlp options with Late-2025 High-Stability Guest Mode:
     
-    1. Random sleep intervals (5-10s) - avoid linear request patterns
-    2. Manual User-Agent (bypass impersonate AssertionError bug)
-    3. Client rotation (mweb, web, android) - use multiple player clients
-    4. PO Token support - Proof of Origin for datacenter IPs
-    5. Extractor args - skip webpage/config to reduce detection surface
+    1. TV + Android clients (most permissive for guest requests December 2025)
+    2. Web Integrity bypass (skip webpage, configs, dash, hls)
+    3. Random sleep intervals (5-10s) - avoid linear request patterns
+    4. curl-cffi for TLS fingerprint impersonation
+    5. No cookies, no PO tokens - pure guest mode
     """
-    # Get token with priority: Manual > Cached Auto > Fresh Auto
-    po_token, visitor_data, token_source = get_po_token()
-    
     opts: dict = {
         "verbose": True,  # Enable verbose logging to see exact errors
         "logger": logger,  # Use our custom logger
@@ -409,44 +289,38 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     if include_ffmpeg and FFMPEG_LOCATION:
         opts["ffmpeg_location"] = FFMPEG_LOCATION
 
-    # Check if cookies are available first (affects client choice)
-    cookies = get_cookies_path()
+    # LATE-2025 HIGH-STABILITY: TV + Android clients
+    # These are the most permissive for guest requests on datacenter IPs (December 2025)
+    # TV client: No Web Integrity API checks
+    # Android client: Mobile app API, very stable for guest mode
+    player_clients = ["tv", "android"]
+    logger.info("📺 Using TV + Android clients (high-stability guest mode)")
     
-    # LATE-2025 FIX: Always use Android/iOS clients ONLY
-    # YouTube's Web Integrity API causes cookies to expire fast on web clients
-    # Mobile app clients (Android/iOS) are more stable on datacenter IPs
-    player_clients = ["android", "ios"]
-    logger.info("📱 Using Android/iOS clients (Web Integrity API bypass)")
-    
+    # Web Integrity Bypass: Skip webpage/configs to avoid detection
+    # Skip dash/hls to force direct format (faster, more reliable)
     extractor_args: dict = {
         "youtube": {
             "player_client": player_clients,
-            # Skip webpage, configs, dash, hls to speed up and reduce detection
             "player_skip": ["webpage", "configs"],
             "skip": ["dash", "hls"],
         }
     }
 
-    # Add PO Token if available (Manual or Auto-generated)
-    # Note: Using android+ prefix since we're using Android client
-    if po_token:
-        extractor_args["youtube"]["po_token"] = [f"android+{po_token}"]
-        logger.info(f"🔑 PO Token applied for Android client (source: {token_source})")
+    # Add static visitor_data if configured (optional, for consistency)
+    if STATIC_VISITOR_DATA:
+        extractor_args["youtube"]["visitor_data"] = [STATIC_VISITOR_DATA]
+        logger.info("🎫 Using static visitor_data")
     else:
-        logger.info("📱 No PO Token - Android client doesn't require it")
-    
-    # Add Visitor Data if available
-    if visitor_data:
-        extractor_args["youtube"]["visitor_data"] = [visitor_data]
+        logger.info("🎫 No static visitor_data - yt-dlp will auto-generate guest token")
 
     opts["extractor_args"] = extractor_args
 
-    # Add cookies if available (with read-only filesystem bypass)
-    # Render's /etc/secrets is read-only, so we tell yt-dlp not to save cookies back
+    # Cookies are OPTIONAL for TV/Android clients (not required for guest mode)
+    # Only add if explicitly available, but don't fail without them
+    cookies = get_cookies_path()
     if cookies:
         opts["cookiefile"] = str(cookies)
-        # CRITICAL: Prevent yt-dlp from trying to write cookies back to read-only filesystem
-        # This is handled by patching cookiejar.save after YoutubeDL init
+        logger.info("🍪 Cookies available (optional, not required for TV/Android)")
 
     return opts, cookies is not None  # Return whether cookies are being used
 

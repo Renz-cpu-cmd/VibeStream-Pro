@@ -1,6 +1,6 @@
 # VibeStream Pro Backend
-# Python 3.11 + ffmpeg + Deno + Node.js (JS runtimes for yt-dlp)
-# Late-2025 Self-Healing Anti-Bot Bypass Stack
+# Python 3.11 + ffmpeg + Deno (JS runtime for n-sig)
+# Late-2025 High-Stability Guest Mode (TV + Android clients)
 # Pro Audio Features: Bass Boost, Nightcore, AI Vocal Removal
 
 FROM python:3.11-slim
@@ -16,12 +16,12 @@ RUN apt-get update && \
 
 # STEP 2: Install system dependencies
 # - ffmpeg: audio/video processing
-# - curl: for installing Deno and Node.js
+# - curl: for installing Deno
 # - unzip: for Deno installation
 # - ca-certificates: for HTTPS requests
 # - git: for yt-dlp nightly builds
-# - gnupg: for Node.js repo key
 # - libsndfile1: for audio-separator (sound file processing)
+# NOTE: Node.js removed - no longer needed (token generator was too slow)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
@@ -29,18 +29,8 @@ RUN apt-get update && \
         unzip \
         ca-certificates \
         git \
-        gnupg \
         libsndfile1 && \
     rm -rf /var/lib/apt/lists/*
-
-# Install Node.js 20 LTS (required for youtube-po-token-generator)
-# This enables automatic PO Token generation without manual F12 extraction
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    rm -rf /var/lib/apt/lists/*
-
-# Verify Node.js installation
-RUN node --version && npm --version
 
 # Install Deno (JavaScript runtime for yt-dlp n-sig challenge solver)
 # REQUIRED for late-2025: YouTube uses JS-based signature challenges
@@ -75,14 +65,9 @@ RUN pip install --no-cache-dir --upgrade setuptools wheel
 # Uses UVR (Ultimate Vocal Remover) models via ONNX runtime (CPU mode)
 RUN pip install --no-cache-dir audio-separator[cpu]
 
-# Install youtube-po-token-generator via NPM (NOT pip - it's an NPM package)
-# This makes the backend 'self-healing' - no manual token extraction needed
-RUN npm install -g youtube-po-token-generator
-
 # Verify installations
 RUN yt-dlp --version
 RUN audio-separator --help || echo "audio-separator installed"
-RUN youtube-po-token-generator --help || echo "youtube-po-token-generator installed"
 
 # Copy application code (excluding cookies.txt for security)
 COPY main.py .
