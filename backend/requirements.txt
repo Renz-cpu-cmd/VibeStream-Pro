@@ -3,3 +3,4 @@ uvicorn[standard]>=0.27,<1.0
 yt-dlp[default,curl-cffi]
 python-multipart>=0.0.9
 slowapi>=0.1.9
+mutagen>=1.47.0

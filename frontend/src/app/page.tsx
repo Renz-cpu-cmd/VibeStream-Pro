@@ -9,6 +9,8 @@ interface VideoInfo {
   thumbnail: string | null;
   duration: number | null;
   duration_str: string;
+  url: string | null;  // Actual video URL (for search results)
+  uploader: string | null;  // Artist/channel name
 }
 
 type HistoryItem = {
@@ -31,6 +33,10 @@ export default function HomePage() {
   const [showDonationModal, setShowDonationModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [audioMode, setAudioMode] = useState<"standard" | "minus_one" | "bass_boost" | "nightcore">("standard");
+  // Trimming state
+  const [enableTrim, setEnableTrim] = useState(false);
+  const [startTime, setStartTime] = useState<number>(0);
+  const [endTime, setEndTime] = useState<number>(0);
 
   // GCash/Maya number - update with your actual number
   const PAYMENT_NUMBER = "09543718983";
@@ -102,6 +108,10 @@ export default function HomePage() {
     setLoading(true);
     setError(null);
     setVideoInfo(null);
+    // Reset trim settings when analyzing new video
+    setEnableTrim(false);
+    setStartTime(0);
+    setEndTime(0);
 
     try {
       const res = await fetch(`${API_BASE}/analyze`, {
@@ -115,6 +125,10 @@ export default function HomePage() {
       }
       const data: VideoInfo = await res.json();
       setVideoInfo(data);
+      // Set default end time to video duration
+      if (data.duration) {
+        setEndTime(data.duration);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -129,7 +143,7 @@ export default function HomePage() {
 
     // Dynamic status messages based on audio mode
     const modeMessages: Record<string, string> = {
-      standard: "Converting to MP3...",
+      standard: enableTrim ? "✂️ Trimming & converting..." : "Converting to MP3...",
       minus_one: "🎤 AI is removing vocals... This may take 1-2 minutes.",
       bass_boost: "🔊 Boosting the bass...",
       nightcore: "⚡ Creating nightcore version...",
@@ -137,9 +151,16 @@ export default function HomePage() {
     setDownloadStatus(modeMessages[audioMode] || "Processing...");
 
     try {
-      const res = await fetch(
-        `${API_BASE}/download?url=${encodeURIComponent(url)}&mode=${audioMode}`
-      );
+      // Use actual video URL from search results, or original input
+      const downloadUrl = videoInfo?.url || url;
+      
+      // Build query params
+      let queryParams = `url=${encodeURIComponent(downloadUrl)}&mode=${audioMode}`;
+      if (enableTrim && startTime < endTime) {
+        queryParams += `&start_time=${startTime}&end_time=${endTime}`;
+      }
+      
+      const res = await fetch(`${API_BASE}/download?${queryParams}`);
 
       if (!res.ok) {
         let errorMessage = "Download failed";
@@ -199,7 +220,7 @@ export default function HomePage() {
                 VibeStream Pro
               </h1>
               <p className="mt-2 text-sm text-gray-300/80 sm:text-base">
-                Paste a link, preview it, then download a clean MP3.
+                Paste a link or search by song name, then download a clean MP3.
               </p>
             </div>
 
@@ -210,7 +231,7 @@ export default function HomePage() {
                   type="text"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
-                  placeholder="Paste video URL here..."
+                  placeholder="Paste URL or search (e.g. 'Bohemian Rhapsody')..."
                   className="w-full rounded-xl border border-white/10 bg-gray-950/40 px-4 py-3 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500/60"
                 />
                 <div className="pointer-events-none absolute inset-0 rounded-xl ring-1 ring-white/5" />
@@ -220,7 +241,7 @@ export default function HomePage() {
                 disabled={loading || !url.trim()}
                 className="rounded-xl bg-purple-600 px-6 py-3 font-semibold text-white shadow-lg shadow-purple-500/20 transition hover:bg-purple-700 hover:shadow-purple-500/30 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {loading ? "Analyzing..." : "Analyze"}
+                {loading ? "Searching..." : "Search"}
               </button>
             </div>
 
@@ -276,6 +297,9 @@ export default function HomePage() {
                   </h2>
                   <p className="mt-1 text-sm text-gray-300/80">
                     Duration: {videoInfo.duration_str}
+                    {videoInfo.uploader && (
+                      <span className="ml-2 text-gray-400">• {videoInfo.uploader}</span>
+                    )}
                   </p>
 
                   {/* Processing Options */}
@@ -314,9 +338,59 @@ export default function HomePage() {
                     )}
                   </div>
 
+                  {/* Audio Trimming */}
+                  <div className="mt-4">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={enableTrim}
+                        onChange={(e) => setEnableTrim(e.target.checked)}
+                        disabled={downloading}
+                        className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500"
+                      />
+                      <span className="text-xs font-medium uppercase tracking-wider text-gray-400">
+                        ✂️ Trim Audio
+                      </span>
+                    </label>
+                    
+                    {enableTrim && (
+                      <div className="mt-3 flex gap-3">
+                        <div className="flex-1">
+                          <label className="block text-xs text-gray-400 mb-1">Start (sec)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={videoInfo.duration || 9999}
+                            value={startTime}
+                            onChange={(e) => setStartTime(Math.max(0, Number(e.target.value)))}
+                            disabled={downloading}
+                            className="w-full rounded-lg border border-white/10 bg-gray-950/40 px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:border-purple-500 focus:outline-none disabled:opacity-50"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <label className="block text-xs text-gray-400 mb-1">End (sec)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={videoInfo.duration || 9999}
+                            value={endTime}
+                            onChange={(e) => setEndTime(Math.min(videoInfo.duration || 9999, Number(e.target.value)))}
+                            disabled={downloading}
+                            className="w-full rounded-lg border border-white/10 bg-gray-950/40 px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:border-purple-500 focus:outline-none disabled:opacity-50"
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {enableTrim && startTime >= endTime && (
+                      <p className="mt-2 text-xs text-red-400">
+                        ⚠️ Start time must be less than end time
+                      </p>
+                    )}
+                  </div>
+
                   <button
                     onClick={handleDownload}
-                    disabled={downloading}
+                    disabled={downloading || (enableTrim && startTime >= endTime)}
                     className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 py-3 font-semibold text-white ring-1 ring-emerald-300/30 shadow-lg shadow-emerald-500/20 transition hover:shadow-emerald-400/30 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {downloading ? (

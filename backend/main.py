@@ -14,6 +14,11 @@ Pro Audio Features:
 - Minus One (Karaoke): AI vocal removal using audio-separator
 - Bass Boosted: +10dB low frequency enhancement
 - Nightcore: 1.25x speed + pitch up
+
+Advanced Personalization:
+- Metadata embedding (cover art, artist, title)
+- Audio trimming (start/end time)
+- Search by song name (ytsearch:)
 """
 
 import logging
@@ -26,7 +31,8 @@ import tempfile
 import traceback
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
+import urllib.request
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,6 +42,16 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 import yt_dlp
+
+# Mutagen for MP3 metadata embedding
+try:
+    from mutagen.mp3 import MP3
+    from mutagen.id3 import ID3, APIC, TIT2, TPE1, ID3NoHeaderError
+    MUTAGEN_AVAILABLE = True
+except ImportError:
+    MUTAGEN_AVAILABLE = False
+    logger_temp = logging.getLogger("vibestream")
+    logger_temp.warning("mutagen not installed - metadata embedding disabled")
 
 # ---------- Logging Setup (Privacy-First) ----------
 logging.getLogger("uvicorn.access").disabled = True
@@ -320,6 +336,8 @@ class VideoInfo(BaseModel):
     thumbnail: str | None
     duration: int | None
     duration_str: str
+    url: str | None = None  # Actual video URL (for search results)
+    uploader: str | None = None  # Artist/channel name
 
 
 # ---------- Helpers ----------
@@ -434,6 +452,39 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         # This is handled by patching cookiejar.save after YoutubeDL init
 
     return opts, cookies is not None  # Return whether cookies are being used
+
+
+# ---------- URL/Search Detection ----------
+def is_url(text: str) -> bool:
+    """Check if text looks like a URL."""
+    url_patterns = [
+        r'^https?://',
+        r'^www\.',
+        r'youtube\.com',
+        r'youtu\.be',
+        r'vimeo\.com',
+        r'soundcloud\.com',
+        r'twitter\.com',
+        r'x\.com',
+        r'tiktok\.com',
+        r'instagram\.com',
+        r'facebook\.com',
+    ]
+    text_lower = text.lower().strip()
+    return any(re.search(pattern, text_lower) for pattern in url_patterns)
+
+
+def prepare_url(input_text: str) -> str:
+    """
+    Prepare URL for yt-dlp. If input looks like a search query,
+    prepend 'ytsearch:' to search YouTube.
+    """
+    text = input_text.strip()
+    if is_url(text):
+        return text
+    # It's a search query - use ytsearch: prefix
+    logger.info(f"🔍 Search query detected, using ytsearch:")
+    return f"ytsearch1:{text}"
 
 
 # ---------- Audio Processing Functions ----------
@@ -565,6 +616,93 @@ def process_audio(input_path: Path, output_dir: Path, mode: AudioMode, title: st
     return None
 
 
+def apply_audio_trim(input_path: Path, output_path: Path, start_time: float, end_time: float) -> bool:
+    """
+    Trim audio using FFmpeg -ss and -to flags.
+    Returns True on success.
+    """
+    logger.info(f"✂️ Trimming audio: {start_time}s to {end_time}s")
+    try:
+        duration = end_time - start_time
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start_time),
+            "-i", str(input_path),
+            "-t", str(duration),
+            "-c:a", "libmp3lame", "-q:a", "2",
+            str(output_path)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.error(f"Audio trim failed: {result.stderr}")
+            return False
+        logger.info("✅ Audio trimmed successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Audio trim error: {e}")
+        return False
+
+
+def embed_metadata(mp3_path: Path, title: str, artist: str, thumbnail_url: Optional[str]) -> bool:
+    """
+    Embed metadata (title, artist, cover art) into MP3 using mutagen.
+    """
+    if not MUTAGEN_AVAILABLE:
+        logger.warning("Mutagen not available, skipping metadata embedding")
+        return False
+    
+    logger.info("📝 Embedding metadata...")
+    try:
+        # Load or create ID3 tags
+        try:
+            audio = MP3(str(mp3_path), ID3=ID3)
+        except ID3NoHeaderError:
+            audio = MP3(str(mp3_path))
+            audio.add_tags()
+        
+        # Set title
+        audio.tags.add(TIT2(encoding=3, text=title))
+        
+        # Set artist
+        if artist:
+            audio.tags.add(TPE1(encoding=3, text=artist))
+        
+        # Download and embed thumbnail as cover art
+        if thumbnail_url:
+            try:
+                logger.info("🖼️ Downloading thumbnail for cover art...")
+                req = urllib.request.Request(
+                    thumbnail_url,
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    image_data = response.read()
+                    # Determine MIME type from URL
+                    mime_type = "image/jpeg"
+                    if ".png" in thumbnail_url.lower():
+                        mime_type = "image/png"
+                    elif ".webp" in thumbnail_url.lower():
+                        mime_type = "image/webp"
+                    
+                    audio.tags.add(APIC(
+                        encoding=3,
+                        mime=mime_type,
+                        type=3,  # Cover (front)
+                        desc="Cover",
+                        data=image_data
+                    ))
+                    logger.info("✅ Cover art embedded")
+            except Exception as e:
+                logger.warning(f"Could not embed thumbnail: {e}")
+        
+        audio.save()
+        logger.info("✅ Metadata embedded successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Metadata embedding error: {e}")
+        return False
+
+
 # ---------- Routes ----------
 @app.get("/health")
 def health_check():
@@ -580,10 +718,14 @@ def root():
 @limiter.limit("20/minute")  # More lenient for analyze
 def analyze_video(request: Request, body: AnalyzeRequest):
     """
-    Extract metadata (title, thumbnail, duration) for a given video URL.
+    Extract metadata (title, thumbnail, duration) for a given video URL or search query.
+    If input is not a URL, searches YouTube using ytsearch:.
     Self-healing: invalidates auto token cache on failure to force regeneration.
     """
     logger.info("Analyze request received")  # No URL logged for privacy
+
+    # Prepare URL (add ytsearch: prefix if it's a search query)
+    prepared_url = prepare_url(body.url)
 
     ydl_opts, has_cookies = build_ydl_opts(for_download=False)
 
@@ -592,7 +734,15 @@ def analyze_video(request: Request, body: AnalyzeRequest):
             # CRITICAL: Patch cookiejar.save to prevent write attempts to read-only filesystem
             if has_cookies and hasattr(ydl, 'cookiejar'):
                 ydl.cookiejar.save = lambda *args, **kwargs: None
-            info = ydl.extract_info(body.url, download=False)
+            info = ydl.extract_info(prepared_url, download=False)
+            
+            # For search results, get the first entry
+            if info and "entries" in info:
+                entries = list(info["entries"])
+                if entries:
+                    info = entries[0]
+                else:
+                    info = None
     except Exception as e:
         error_str = str(e).lower()
         logger.error(f"Analyze failed: {e}")
@@ -603,10 +753,10 @@ def analyze_video(request: Request, body: AnalyzeRequest):
             invalidate_auto_token()
             logger.info("🔄 Self-healing triggered - token cache invalidated")
         
-        raise HTTPException(status_code=400, detail=f"Could not analyze URL: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not analyze: {e}")
 
     if info is None:
-        raise HTTPException(status_code=400, detail="No info returned for this URL")
+        raise HTTPException(status_code=400, detail="No results found")
 
     duration = info.get("duration")
     logger.info("Analyze successful")
@@ -616,6 +766,9 @@ def analyze_video(request: Request, body: AnalyzeRequest):
         thumbnail=info.get("thumbnail"),
         duration=duration,
         duration_str=format_duration(duration),
+        # Include the actual URL for download (important for search results)
+        url=info.get("webpage_url") or info.get("url"),
+        uploader=info.get("uploader") or info.get("channel"),
     )
 
 
@@ -623,8 +776,10 @@ def analyze_video(request: Request, body: AnalyzeRequest):
 @limiter.limit("5/hour")  # 5 downloads per hour per IP
 def download_audio(
     request: Request,
-    url: str = Query(..., description="Video URL"),
-    mode: AudioMode = Query("standard", description="Audio processing mode")
+    url: str = Query(..., description="Video URL or search query"),
+    mode: AudioMode = Query("standard", description="Audio processing mode"),
+    start_time: Optional[float] = Query(None, description="Trim start time in seconds"),
+    end_time: Optional[float] = Query(None, description="Trim end time in seconds"),
 ):
     """
     Stream the audio (MP3) of the given video URL with optional processing.
@@ -635,15 +790,22 @@ def download_audio(
     - nightcore: 1.25x speed + pitch up
     - minus_one: AI vocal removal (karaoke)
     
+    Advanced Options:
+    - start_time/end_time: Trim audio to specific range
+    - Metadata embedding: Cover art, title, artist automatically added
+    
     Rate limited to 5 downloads per hour per IP.
     """
-    logger.info(f"Download request received (mode: {mode})")  # No URL logged for privacy
+    logger.info(f"Download request received (mode: {mode}, trim: {start_time}-{end_time})")
 
     if not ffmpeg_available():
         raise HTTPException(
             status_code=500,
             detail="ffmpeg not found. Server configuration error.",
         )
+
+    # Prepare URL (add ytsearch: prefix if it's a search query)
+    prepared_url = prepare_url(url)
 
     # First, get video info
     ydl_opts, has_cookies = build_ydl_opts(for_download=False, include_ffmpeg=True)
@@ -653,7 +815,15 @@ def download_audio(
             # CRITICAL: Patch cookiejar.save to prevent write attempts to read-only filesystem
             if has_cookies and hasattr(ydl, 'cookiejar'):
                 ydl.cookiejar.save = lambda *args, **kwargs: None
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(prepared_url, download=False)
+            
+            # For search results, get the first entry
+            if info and "entries" in info:
+                entries = list(info["entries"])
+                if entries:
+                    info = entries[0]
+                else:
+                    info = None
     except Exception as e:
         error_str = str(e).lower()
         logger.error(f"Download info fetch failed: {e}")
@@ -664,12 +834,24 @@ def download_audio(
             invalidate_auto_token()
             logger.info("🔄 Self-healing triggered - token cache invalidated")
         
-        raise HTTPException(status_code=400, detail=f"Could not fetch URL: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not fetch: {e}")
 
     if info is None:
-        raise HTTPException(status_code=400, detail="No info for this URL")
+        raise HTTPException(status_code=400, detail="No results found")
 
+    # Extract metadata for embedding
     title = sanitize_filename(info.get("title", "audio"))
+    uploader = info.get("uploader") or info.get("channel") or ""
+    thumbnail_url = info.get("thumbnail")
+    video_duration = info.get("duration")
+    actual_url = info.get("webpage_url") or info.get("url") or prepared_url
+
+    # Validate trim times
+    if start_time is not None and end_time is not None:
+        if start_time >= end_time:
+            raise HTTPException(status_code=400, detail="start_time must be less than end_time")
+        if video_duration and end_time > video_duration:
+            end_time = video_duration
 
     # Download to temp file
     tmp_dir = tempfile.mkdtemp()
@@ -693,7 +875,7 @@ def download_audio(
             # CRITICAL: Patch cookiejar.save to prevent write attempts to read-only filesystem
             if has_cookies_dl and hasattr(ydl, 'cookiejar'):
                 ydl.cookiejar.save = lambda *args, **kwargs: None
-            ydl.download([url])
+            ydl.download([actual_url])
     except Exception as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         logger.error(f"Download/conversion failed: {e}")
@@ -706,10 +888,19 @@ def download_audio(
         raise HTTPException(status_code=500, detail="MP3 conversion failed.")
 
     original_mp3 = mp3_files[0]
-    logger.info("Download successful, applying audio processing...")
+    current_mp3 = original_mp3
+    logger.info("Download successful, applying processing...")
 
-    # Apply audio processing based on mode
-    final_path = process_audio(original_mp3, tmp_path, mode, title)
+    # Step 1: Apply audio trimming if requested
+    if start_time is not None and end_time is not None:
+        trimmed_path = tmp_path / f"{title}_trimmed.mp3"
+        if apply_audio_trim(current_mp3, trimmed_path, start_time, end_time):
+            current_mp3 = trimmed_path
+        else:
+            logger.warning("Trimming failed, continuing with full audio")
+
+    # Step 2: Apply audio processing based on mode
+    final_path = process_audio(current_mp3, tmp_path, mode, title)
     
     if final_path is None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -717,6 +908,9 @@ def download_audio(
             status_code=500,
             detail=f"Audio processing failed for mode: {mode}"
         )
+
+    # Step 3: Embed metadata (title, artist, cover art)
+    embed_metadata(final_path, title, uploader, thumbnail_url)
 
     # Determine output filename suffix based on mode
     mode_suffixes = {
@@ -726,7 +920,8 @@ def download_audio(
         "minus_one": "_instrumental",
     }
     suffix = mode_suffixes.get(mode, "")
-    output_filename = f"{title}{suffix}.mp3"
+    trim_suffix = f"_{int(start_time)}-{int(end_time)}s" if (start_time is not None and end_time is not None) else ""
+    output_filename = f"{title}{suffix}{trim_suffix}.mp3"
 
     logger.info(f"Processing complete, serving file: {output_filename}")
 
