@@ -6,6 +6,7 @@
 FROM python:3.11-slim
 
 # Install system dependencies:
+# - build-essential, gcc, python3-dev: C compiler for building Python wheels (diffq, etc.)
 # - ffmpeg: audio/video processing
 # - curl: for installing Deno and Node.js
 # - unzip: for Deno installation
@@ -15,6 +16,9 @@ FROM python:3.11-slim
 # - libsndfile1: for audio-separator (sound file processing)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        python3-dev \
         ffmpeg \
         curl \
         unzip \
