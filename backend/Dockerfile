@@ -1,24 +1,36 @@
 # VibeStream Pro Backend
-# Python 3.11 + ffmpeg + Deno (JS runtime for yt-dlp n-sig solver)
-# Late-2025 Anti-Bot Bypass Stack
+# Python 3.11 + ffmpeg + Deno + Node.js (JS runtimes for yt-dlp)
+# Late-2025 Self-Healing Anti-Bot Bypass Stack
 
 FROM python:3.11-slim
 
 # Install system dependencies:
 # - ffmpeg: audio/video processing
-# - curl: for installing Deno and yt-dlp nightly
+# - curl: for installing Deno and Node.js
 # - unzip: for Deno installation
 # - ca-certificates: for HTTPS requests
 # - git: for yt-dlp nightly builds
+# - gnupg: for Node.js repo key
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         curl \
         unzip \
         ca-certificates \
-        git && \
+        git \
+        gnupg && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20 LTS (required for youtube-po-token-generator)
+# This enables automatic PO Token generation without manual F12 extraction
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Verify Node.js installation
+RUN node --version && npm --version
 
 # Install Deno (JavaScript runtime for yt-dlp n-sig challenge solver)
 # REQUIRED for late-2025: YouTube uses JS-based signature challenges
@@ -42,7 +54,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # This is REQUIRED to bypass the Dec 20th 2025 YouTube update affecting Render IPs
 RUN pip install -U --pre "yt-dlp[default,curl-cffi]"
 
-# Verify yt-dlp version
+# Install youtube-po-token-generator for automatic PO Token generation
+# This makes the backend 'self-healing' - no manual token extraction needed
+RUN pip install youtube-po-token-generator
+
+# Verify installations
 RUN yt-dlp --version
 
 # Copy application code (excluding cookies.txt for security)

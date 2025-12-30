@@ -57,23 +57,83 @@ COOKIES_PATH = BACKEND_DIR / "cookies.txt"
 COOKIES_SECRET_PATH = Path("/run/secrets/cookies_txt")
 
 # ---------- PO Token Setup (Proof of Origin) ----------
-# SECURE: Load from environment variable only - NEVER hardcode in public repos!
-#
-# How to get a PO Token:
-# 1. Open YouTube in Chrome, press F12 -> Network tab
-# 2. Play any video and look for requests to /youtubei/v1/player
-# 3. In the request payload, find "serviceIntegrityDimensions" -> "poToken"
-# 4. Copy that base64 string
-# 5. Set it as YOUTUBE_PO_TOKEN environment variable in Render
-#
-# IMPORTANT: PO Tokens expire! You may need to refresh periodically.
-PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN", "")
-VISITOR_DATA = os.getenv("YOUTUBE_VISITOR_DATA", "")
+# Priority: Manual env var > Auto-generated
+# Manual: Set YOUTUBE_PO_TOKEN in Render environment variables
+# Auto: Uses youtube-po-token-generator library if manual not provided
 
-# Log warning if PO Token is missing (app won't crash, just warn)
-if not PO_TOKEN:
-    import sys
-    print("⚠️  WARNING: YOUTUBE_PO_TOKEN not set. Some videos may fail on datacenter IPs.", file=sys.stderr)
+MANUAL_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN", "")
+MANUAL_VISITOR_DATA = os.getenv("YOUTUBE_VISITOR_DATA", "")
+
+# Global cache for auto-generated tokens (refreshed on failure)
+_auto_token_cache: dict = {"po_token": None, "visitor_data": None, "generated_at": None}
+
+
+def get_auto_po_token() -> tuple[str | None, str | None]:
+    """
+    Auto-generate PO Token using youtube-po-token-generator.
+    Returns (po_token, visitor_data) or (None, None) on failure.
+    """
+    global _auto_token_cache
+    
+    try:
+        from youtube_po_token_generator import YoutubePOTokenGenerator
+        
+        logger.info("🔄 Generating Auto Token via youtube-po-token-generator...")
+        generator = YoutubePOTokenGenerator()
+        token_data = generator.generate()
+        
+        po_token = token_data.get("poToken") or token_data.get("po_token")
+        visitor_data = token_data.get("visitorData") or token_data.get("visitor_data")
+        
+        if po_token:
+            _auto_token_cache["po_token"] = po_token
+            _auto_token_cache["visitor_data"] = visitor_data
+            _auto_token_cache["generated_at"] = os.popen("date").read().strip()
+            logger.info("✅ Auto Token generated successfully")
+            return po_token, visitor_data
+        else:
+            logger.warning("⚠️ Auto Token generation returned empty token")
+            return None, None
+            
+    except ImportError:
+        logger.warning("⚠️ youtube-po-token-generator not installed")
+        return None, None
+    except Exception as e:
+        logger.error(f"❌ Auto Token generation failed: {e}")
+        return None, None
+
+
+def get_po_token() -> tuple[str | None, str | None, str]:
+    """
+    Get PO Token with priority: Manual > Cached Auto > Fresh Auto.
+    Returns (po_token, visitor_data, source_label).
+    """
+    # Priority 1: Manual token from environment variable
+    if MANUAL_PO_TOKEN:
+        logger.info("🔑 Using Manual Token from YOUTUBE_PO_TOKEN env var")
+        return MANUAL_PO_TOKEN, MANUAL_VISITOR_DATA, "manual"
+    
+    # Priority 2: Cached auto-generated token
+    if _auto_token_cache["po_token"]:
+        logger.info("🔑 Using Cached Auto Token")
+        return _auto_token_cache["po_token"], _auto_token_cache["visitor_data"], "auto_cached"
+    
+    # Priority 3: Generate fresh auto token
+    po_token, visitor_data = get_auto_po_token()
+    if po_token:
+        return po_token, visitor_data, "auto_fresh"
+    
+    # No token available
+    logger.warning("⚠️ No PO Token available (manual or auto)")
+    return None, None, "none"
+
+
+def invalidate_auto_token():
+    """Clear cached auto token to force regeneration on next request."""
+    global _auto_token_cache
+    _auto_token_cache = {"po_token": None, "visitor_data": None, "generated_at": None}
+    logger.info("🔄 Auto Token cache invalidated - will regenerate on next request")
+
 
 # ---------- User-Agent Rotation Pool ----------
 # Real Chrome/Android user agents to rotate through
@@ -147,14 +207,25 @@ def startup_checks():
     else:
         logger.warning("⚠️  No JS runtime (Deno/QuickJS) - n-sig challenges will FAIL!")
 
-    # PO Token check (CRITICAL for datacenter IPs)
-    if PO_TOKEN:
-        logger.info("✅ YOUTUBE_PO_TOKEN configured (Proof of Origin)")
+    # Node.js check (for youtube-po-token-generator)
+    if shutil.which("node"):
+        logger.info("✅ Node.js found (auto token generation ready)")
     else:
-        logger.warning("⚠️  YOUTUBE_PO_TOKEN not set - videos may fail on datacenter IPs!")
-        logger.info("   Set this in Render environment variables")
+        logger.warning("⚠️  Node.js not found - auto token generation unavailable")
 
-    if VISITOR_DATA:
+    # PO Token check (CRITICAL for datacenter IPs)
+    if MANUAL_PO_TOKEN:
+        logger.info("✅ Using Manual Token from YOUTUBE_PO_TOKEN env var")
+    else:
+        logger.info("ℹ️  No manual YOUTUBE_PO_TOKEN - will use auto-generation")
+        # Try to verify auto-generation works
+        try:
+            from youtube_po_token_generator import YoutubePOTokenGenerator
+            logger.info("✅ youtube-po-token-generator available for auto tokens")
+        except ImportError:
+            logger.warning("⚠️  youtube-po-token-generator not installed")
+
+    if MANUAL_VISITOR_DATA:
         logger.info("✅ YOUTUBE_VISITOR_DATA configured")
 
     # Cookies check
@@ -166,9 +237,8 @@ def startup_checks():
 
     # Feature summary
     logger.info("✅ Rate limiting: 5 downloads/hour per IP")
-    logger.info("✅ Browser impersonation: curl-cffi enabled")
-    logger.info("✅ User-Agent rotation: %d agents in pool", len(USER_AGENTS))
-    logger.info("✅ Client rotation: tv, mweb, ios, android")
+    logger.info("✅ Browser impersonation: curl-cffi (chrome)")
+    logger.info("✅ Client fallback: mweb → web → android")
 
 
 # ---------- CORS Setup ----------
@@ -258,25 +328,31 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         opts["ffmpeg_location"] = FFMPEG_LOCATION
 
     # Build extractor args with client rotation and PO Token
+    # Get token with priority: Manual > Cached Auto > Fresh Auto
+    po_token, visitor_data, token_source = get_po_token()
+    
     extractor_args: dict = {
         "youtube": {
-            # Client rotation: mweb + web for PO Token compatibility
+            # Client priority: mweb + web for PO Token, android as fallback
             # mweb = Mobile web (lowest bot detection, try first)
             # web = Desktop web client (works with PO Token)
-            "player_client": ["mweb", "web"],
+            # android = Android client (different security threshold, fallback)
+            "player_client": ["mweb", "web", "android"],
             # Skip webpage and configs to reduce detection surface
             "player_skip": ["webpage", "configs"],
         }
     }
 
-    # Add PO Token if configured (Proof of Origin)
-    # This is CRUCIAL for datacenter IPs in late-2025
-    if PO_TOKEN:
-        extractor_args["youtube"]["po_token"] = [f"web+{PO_TOKEN}"]
+    # Add PO Token if available (Manual or Auto-generated)
+    if po_token:
+        extractor_args["youtube"]["po_token"] = [f"web+{po_token}"]
+        logger.info(f"🔑 PO Token applied (source: {token_source})")
+    else:
+        logger.warning("⚠️ No PO Token - relying on Android client fallback")
     
-    # Add Visitor Data if configured
-    if VISITOR_DATA:
-        extractor_args["youtube"]["visitor_data"] = [VISITOR_DATA]
+    # Add Visitor Data if available
+    if visitor_data:
+        extractor_args["youtube"]["visitor_data"] = [visitor_data]
 
     opts["extractor_args"] = extractor_args
 
@@ -308,6 +384,7 @@ def root():
 def analyze_video(request: Request, body: AnalyzeRequest):
     """
     Extract metadata (title, thumbnail, duration) for a given video URL.
+    Self-healing: invalidates auto token cache on failure to force regeneration.
     """
     logger.info("Analyze request received")  # No URL logged for privacy
 
@@ -317,8 +394,15 @@ def analyze_video(request: Request, body: AnalyzeRequest):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(body.url, download=False)
     except Exception as e:
+        error_str = str(e).lower()
         logger.error(f"Analyze failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Self-healing: if it looks like a token/auth error, invalidate cache
+        if any(keyword in error_str for keyword in ["403", "forbidden", "bot", "token", "sign in"]):
+            invalidate_auto_token()
+            logger.info("🔄 Self-healing triggered - token cache invalidated")
+        
         raise HTTPException(status_code=400, detail=f"Could not analyze URL: {e}")
 
     if info is None:
@@ -357,8 +441,15 @@ def download_audio(request: Request, url: str = Query(..., description="Video UR
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
+        error_str = str(e).lower()
         logger.error(f"Download info fetch failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Self-healing: if it looks like a token/auth error, invalidate cache
+        if any(keyword in error_str for keyword in ["403", "forbidden", "bot", "token", "sign in"]):
+            invalidate_auto_token()
+            logger.info("🔄 Self-healing triggered - token cache invalidated")
+        
         raise HTTPException(status_code=400, detail=f"Could not fetch URL: {e}")
 
     if info is None:
