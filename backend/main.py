@@ -263,10 +263,10 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     # Build extractor args with client rotation and PO Token
     extractor_args: dict = {
         "youtube": {
-            # Client rotation: web + mweb for PO Token compatibility
+            # Client rotation: mweb + web for PO Token compatibility
+            # mweb = Mobile web (lowest bot detection, try first)
             # web = Desktop web client (works with PO Token)
-            # mweb = Mobile web (lowest bot detection, PO Token compatible)
-            "player_client": ["web", "mweb"],
+            "player_client": ["mweb", "web"],
             # Skip webpage and configs to reduce detection surface
             "player_skip": ["webpage", "configs"],
         }
