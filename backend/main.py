@@ -88,7 +88,7 @@ def get_auto_po_token() -> tuple[str | None, str | None]:
             ["youtube-po-token-generator"],
             capture_output=True,
             text=True,
-            timeout=60  # 60 second timeout
+            timeout=120  # 120 second timeout (Render free tier can be slow)
         )
         
         if result.returncode != 0:
@@ -126,7 +126,7 @@ def get_auto_po_token() -> tuple[str | None, str | None]:
         logger.warning("⚠️ youtube-po-token-generator CLI not found (npm package not installed)")
         return None, None
     except subprocess.TimeoutExpired:
-        logger.error("❌ Auto Token generation timed out after 60 seconds")
+        logger.error("❌ Auto Token generation timed out after 120 seconds")
         return None, None
     except json.JSONDecodeError as e:
         logger.error(f"❌ Failed to parse JSON from youtube-po-token-generator: {e}")
@@ -328,7 +328,7 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()[:100]
 
 
-def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> dict:
+def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> tuple[dict, bool]:
     """
     Build yt-dlp options with Late-2025 Anti-Bot Bypass Stack:
     
@@ -357,6 +357,7 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         # Stability: skip format checking for faster metadata analysis
         "check_formats": False,
         "file_access_prefs": [],
+        "noplaylist": True,  # Single video only, no playlist expansion
         # Rate limiting: longer sleep to look less like a bot (5-10 seconds)
         "sleep_interval": 5,
         "max_sleep_interval": 10,
@@ -381,14 +382,23 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     if include_ffmpeg and FFMPEG_LOCATION:
         opts["ffmpeg_location"] = FFMPEG_LOCATION
 
-    # Build extractor args with client rotation and PO Token
+    # Check if cookies are available first (affects client choice)
+    cookies = get_cookies_path()
+    
+    # Build extractor args with smart client rotation based on cookies
+    # ios/android clients skip cookies, so use web/mweb when cookies are present
+    if cookies:
+        # With cookies: use web clients that respect cookies
+        player_clients = ["web", "mweb"]
+        logger.info("🍪 Cookies detected - using web/mweb clients")
+    else:
+        # Without cookies: mobile clients are more lenient
+        player_clients = ["ios", "android", "web"]
+        logger.info("👤 No cookies - using ios/android/web clients")
+    
     extractor_args: dict = {
         "youtube": {
-            # Client priority: ios + android first (YouTube more lenient with signed-in mobile)
-            # ios = iOS app client (best with cookies)
-            # android = Android app client (good fallback)
-            # web = Desktop web client (works with PO Token)
-            "player_client": ["ios", "android", "web"],
+            "player_client": player_clients,
             # Skip webpage and configs to reduce detection surface
             "player_skip": ["webpage", "configs"],
         }
@@ -407,12 +417,14 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
 
     opts["extractor_args"] = extractor_args
 
-    # Try cookies if available (authenticated requests)
-    cookies = get_cookies_path()
+    # Add cookies if available (with read-only filesystem bypass)
+    # Render's /etc/secrets is read-only, so we tell yt-dlp not to save cookies back
     if cookies:
         opts["cookiefile"] = str(cookies)
+        # CRITICAL: Prevent yt-dlp from trying to write cookies back to read-only filesystem
+        # This is handled by patching cookiejar.save after YoutubeDL init
 
-    return opts
+    return opts, cookies is not None  # Return whether cookies are being used
 
 
 # ---------- Routes ----------
@@ -435,10 +447,13 @@ def analyze_video(request: Request, body: AnalyzeRequest):
     """
     logger.info("Analyze request received")  # No URL logged for privacy
 
-    ydl_opts = build_ydl_opts(for_download=False)
+    ydl_opts, has_cookies = build_ydl_opts(for_download=False)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # CRITICAL: Patch cookiejar.save to prevent write attempts to read-only filesystem
+            if has_cookies and hasattr(ydl, 'cookiejar'):
+                ydl.cookiejar.save = lambda *args, **kwargs: None
             info = ydl.extract_info(body.url, download=False)
     except Exception as e:
         error_str = str(e).lower()
@@ -482,10 +497,13 @@ def download_audio(request: Request, url: str = Query(..., description="Video UR
         )
 
     # First, get video info
-    ydl_opts = build_ydl_opts(for_download=False, include_ffmpeg=True)
+    ydl_opts, has_cookies = build_ydl_opts(for_download=False, include_ffmpeg=True)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # CRITICAL: Patch cookiejar.save to prevent write attempts to read-only filesystem
+            if has_cookies and hasattr(ydl, 'cookiejar'):
+                ydl.cookiejar.save = lambda *args, **kwargs: None
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         error_str = str(e).lower()
@@ -507,7 +525,7 @@ def download_audio(request: Request, url: str = Query(..., description="Video UR
     # Download to temp file
     tmp_dir = tempfile.mkdtemp()
 
-    ydl_download_opts = build_ydl_opts(for_download=True, include_ffmpeg=True)
+    ydl_download_opts, has_cookies_dl = build_ydl_opts(for_download=True, include_ffmpeg=True)
     ydl_download_opts.update({
         "format": "bestaudio/best",
         "outtmpl": str(Path(tmp_dir) / "%(title)s.%(ext)s"),
@@ -522,6 +540,9 @@ def download_audio(request: Request, url: str = Query(..., description="Video UR
 
     try:
         with yt_dlp.YoutubeDL(ydl_download_opts) as ydl:
+            # CRITICAL: Patch cookiejar.save to prevent write attempts to read-only filesystem
+            if has_cookies_dl and hasattr(ydl, 'cookiejar'):
+                ydl.cookiejar.save = lambda *args, **kwargs: None
             ydl.download([url])
     except Exception as e:
         shutil.rmtree(tmp_dir, ignore_errors=True)
