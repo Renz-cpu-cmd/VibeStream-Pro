@@ -349,18 +349,16 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "sleep_interval": 5,
         "max_sleep_interval": 10,
         "sleep_interval_requests": random.uniform(2, 5),
-        # BYPASS: Set impersonate to empty string to avoid AssertionError
-        # The yt-dlp impersonation layer has a bug with type checking
-        # We manually set User-Agent instead
-        "impersonate": "",
+        # BYPASS AssertionError: Set impersonate to None and use curl_cffi handler directly
+        # This completely bypasses the buggy _impersonate_target_available check
+        "impersonate": None,
+        "request_handler": "curl_cffi",
         # Manual headers since we're bypassing impersonate
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
             "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
         },
     }
 

@@ -49,10 +49,9 @@ COPY requirements.txt .
 # Install Python dependencies (includes curl-cffi for TLS impersonation)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install yt-dlp STABLE with curl-cffi for browser impersonation
-# Using stable version to avoid nightly bugs in impersonation type-check
-# The stable version has tested networking layer that works with impersonate option
-RUN pip install -U "yt-dlp[default,curl-cffi]"
+# Install yt-dlp STABLE with curl-cffi - force clean install to avoid cached buggy versions
+# --no-cache-dir ensures we get fresh packages every build
+RUN pip install --no-cache-dir -U "yt-dlp[default,curl-cffi]"
 
 # Install youtube-po-token-generator via NPM (NOT pip - it's an NPM package)
 # This makes the backend 'self-healing' - no manual token extraction needed
