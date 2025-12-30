@@ -1,30 +1,20 @@
 # VibeStream Pro Backend
 # Python 3.11 + ffmpeg + Deno (JS runtime for n-sig)
-# Late-2025 Pure Guest Mode (TV + Android clients)
-# Pro Audio Features: Bass Boost, Nightcore, AI Vocal Removal
+# Late-2025 TV Client Bypass (TV + iOS clients)
+# Pro Audio Features: Bass Boost, Nightcore, Vocal Removal (FFmpeg)
 
 FROM python:3.11-slim
 
-# Install build tools (required for compiling diffq wheel used by audio-separator)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        gcc \
-        python3-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install system dependencies
-# - ffmpeg: audio/video processing
+# Install system dependencies only (no build tools needed - using pre-built wheels)
+# - ffmpeg: audio/video processing (also handles vocal removal via center channel)
 # - curl + unzip: for Deno installation  
 # - ca-certificates: for HTTPS
-# - libsndfile1: for audio-separator
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         curl \
         unzip \
-        ca-certificates \
-        libsndfile1 && \
+        ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Deno (required for yt-dlp n-sig challenge solver)
@@ -35,8 +25,6 @@ RUN deno --version
 
 WORKDIR /app
 
-# Environment for Render free tier (CPU only)
-ENV ONNX_RUNTIME_EXECUTION_PROVIDERS="CPUExecutionProvider"
 ENV PYTHONUNBUFFERED=1
 
 # Copy requirements first for layer caching
@@ -47,9 +35,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Install yt-dlp with curl-cffi for TLS impersonation
 RUN pip install --no-cache-dir -U "yt-dlp[default,curl-cffi]"
-
-# Install audio-separator for AI vocal removal (uses pre-built wheels)
-RUN pip install --no-cache-dir audio-separator[cpu]
 
 # Verify
 RUN yt-dlp --version

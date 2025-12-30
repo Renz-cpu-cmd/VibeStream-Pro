@@ -104,7 +104,7 @@ def startup_checks():
         logger.warning("⚠️  No JS runtime (Deno) - n-sig challenges may FAIL!")
 
     # Feature summary
-    logger.info("📺 Pure Guest Mode: TV + Android clients")
+    logger.info("📺 Pure Guest Mode: TV + iOS clients (Dec 2025 bypass)")
     logger.info("✅ Web Integrity bypass: skip webpage/configs/dash/hls")
     logger.info("✅ Rate limiting: 5 downloads/hour per IP")
 
@@ -160,11 +160,12 @@ def sanitize_filename(name: str) -> str:
 
 def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> dict:
     """
-    Build yt-dlp options with Late-2025 High-Stability Pure Guest Mode.
+    Build yt-dlp options with Late-2025 TV Client Bypass.
     
     Key settings (December 2025):
-    - TV + Android clients (most permissive for datacenter IPs)
+    - TV + iOS clients (most stable for Render datacenter IPs)
     - Web Integrity bypass (skip webpage/configs/dash/hls)
+    - player_params: atfg=1 forces TV-specific parameters
     - curl-cffi for TLS fingerprint impersonation
     - NO cookies, NO PO tokens - pure guest mode
     """
@@ -177,12 +178,13 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         # Pure Guest Mode: NO impersonate, use curl_cffi directly
         "impersonate": None,
         "request_handler": "curl_cffi",
-        # Web Integrity Bypass
+        # TV Client Bypass (December 2025)
         "extractor_args": {
             "youtube": {
-                "player_client": ["tv", "android"],
+                "player_client": ["tv", "ios"],
                 "player_skip": ["webpage", "configs"],
                 "skip": ["dash", "hls"],
+                "player_params": "atfg=1",  # Forces TV-specific parameters
             }
         },
     }
@@ -269,49 +271,31 @@ def apply_nightcore(input_path: Path, output_path: Path) -> bool:
         return False
 
 
-def apply_vocal_removal(input_path: Path, output_dir: Path) -> Path | None:
+def apply_vocal_removal(input_path: Path, output_path: Path) -> bool:
     """
-    Remove vocals using audio-separator (AI-based vocal isolation).
-    Returns path to instrumental track, or None on failure.
-    
-    Uses the UVR-MDX-NET-Inst_HQ_3 model for high-quality instrumental extraction.
+    Remove vocals using FFmpeg center channel extraction (phase inversion).
+    This is a lightweight alternative to AI-based separation.
+    Works best on tracks with centered vocals and stereo instruments.
     """
-    logger.info("🎤 Starting AI vocal removal... (this may take 1-2 minutes)")
+    logger.info("🎤 Applying vocal removal (center channel extraction)...")
     try:
-        # audio-separator outputs to a folder, creates files like:
-        # - input_(Instrumental)_model.wav
-        # - input_(Vocals)_model.wav
+        # Center channel extraction: invert one channel and mix
+        # This cancels out centered audio (usually vocals)
         cmd = [
-            "audio-separator",
-            str(input_path),
-            "--model_filename", "UVR-MDX-NET-Inst_HQ_3.onnx",
-            "--output_dir", str(output_dir),
-            "--output_format", "mp3",
+            "ffmpeg", "-y", "-i", str(input_path),
+            "-af", "pan=stereo|c0=c0-c1|c1=c1-c0,stereotools=mlev=0.015625",
+            "-c:a", "libmp3lame", "-q:a", "2",
+            str(output_path)
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 min timeout
-        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
             logger.error(f"Vocal removal failed: {result.stderr}")
-            return None
-        
-        # Find the instrumental file (contains "Instrumental" in filename)
-        instrumental_files = list(output_dir.glob("*(Instrumental)*.mp3"))
-        if not instrumental_files:
-            # Try alternative naming pattern
-            instrumental_files = list(output_dir.glob("*instrumental*.mp3"))
-        
-        if not instrumental_files:
-            logger.error("No instrumental file found after vocal removal")
-            return None
-        
-        logger.info("✅ Vocal removal completed successfully")
-        return instrumental_files[0]
-    except subprocess.TimeoutExpired:
-        logger.error("❌ Vocal removal timed out (exceeded 5 minutes)")
-        return None
+            return False
+        logger.info("✅ Vocal removal applied successfully")
+        return True
     except Exception as e:
         logger.error(f"Vocal removal error: {e}")
-        return None
+        return False
 
 
 def process_audio(input_path: Path, output_dir: Path, mode: AudioMode, title: str) -> Path | None:
@@ -336,11 +320,10 @@ def process_audio(input_path: Path, output_dir: Path, mode: AudioMode, title: st
         return None
     
     elif mode == "minus_one":
-        # Vocal removal outputs to a subdirectory
-        separator_output = output_dir / "separated"
-        separator_output.mkdir(exist_ok=True)
-        result = apply_vocal_removal(input_path, separator_output)
-        return result
+        output_path = output_dir / f"{title}_instrumental.mp3"
+        if apply_vocal_removal(input_path, output_path):
+            return output_path
+        return None
     
     return None
 
