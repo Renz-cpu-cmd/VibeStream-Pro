@@ -323,15 +323,18 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     """
     Build yt-dlp options with Late-2025 Anti-Bot Bypass Stack:
     
-    1. Random sleep intervals (3-8s) - avoid linear request patterns
-    2. Browser impersonation (curl-cffi) - bypass TLS fingerprinting
-    3. Client rotation (tv, mweb, ios, android) - use multiple player clients
+    1. Random sleep intervals (5-10s) - avoid linear request patterns
+    2. Manual User-Agent (bypass impersonate AssertionError bug)
+    3. Client rotation (mweb, web, android) - use multiple player clients
     4. PO Token support - Proof of Origin for datacenter IPs
-    5. User-Agent rotation - unique fingerprint per request
-    6. Extractor args - skip webpage/config to reduce detection surface
+    5. Extractor args - skip webpage/config to reduce detection surface
     """
+    # Get token with priority: Manual > Cached Auto > Fresh Auto
+    po_token, visitor_data, token_source = get_po_token()
+    
     opts: dict = {
         "verbose": True,  # Enable verbose logging to see exact errors
+        "logger": logger,  # Use our custom logger
         "quiet": False,   # Disable quiet mode for debugging
         "no_warnings": False,  # Show warnings for debugging
         "no_color": True,
@@ -346,9 +349,19 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "sleep_interval": 5,
         "max_sleep_interval": 10,
         "sleep_interval_requests": random.uniform(2, 5),
-        # Browser impersonation via curl-cffi (bypasses TLS fingerprinting)
-        # Use Chrome consistently - DO NOT rotate, as PO Token is tied to Chrome
-        "impersonate": "chrome",
+        # BYPASS: Set impersonate to empty string to avoid AssertionError
+        # The yt-dlp impersonation layer has a bug with type checking
+        # We manually set User-Agent instead
+        "impersonate": "",
+        # Manual headers since we're bypassing impersonate
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        },
     }
 
     if not for_download:
@@ -359,9 +372,6 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         opts["ffmpeg_location"] = FFMPEG_LOCATION
 
     # Build extractor args with client rotation and PO Token
-    # Get token with priority: Manual > Cached Auto > Fresh Auto
-    po_token, visitor_data, token_source = get_po_token()
-    
     extractor_args: dict = {
         "youtube": {
             # Client priority: mweb + web for PO Token, android as fallback
@@ -391,10 +401,6 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     cookies = get_cookies_path()
     if cookies:
         opts["cookiefile"] = str(cookies)
-
-    # NOTE: Do NOT set http_headers manually!
-    # Let curl-cffi handle headers automatically via "impersonate": "chrome"
-    # Manual headers cause fingerprint mismatch (e.g., iPhone UA + Safari impersonate = instant block)
 
     return opts
 
