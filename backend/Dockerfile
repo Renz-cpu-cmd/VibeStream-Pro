@@ -5,7 +5,15 @@
 
 FROM python:3.11-slim
 
-# Install system dependencies (minimal)
+# Install build tools (required for compiling diffq wheel used by audio-separator)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        python3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install system dependencies
 # - ffmpeg: audio/video processing
 # - curl + unzip: for Deno installation  
 # - ca-certificates: for HTTPS
