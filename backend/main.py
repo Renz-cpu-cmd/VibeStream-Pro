@@ -57,9 +57,9 @@ COOKIES_PATH = BACKEND_DIR / "cookies.txt"
 COOKIES_SECRET_PATH = Path("/run/secrets/cookies_txt")
 
 # ---------- PO Token Setup (Proof of Origin) ----------
-# Priority: Manual env var > Auto-generated
+# Priority: Manual env var > Auto-generated via CLI
 # Manual: Set YOUTUBE_PO_TOKEN in Render environment variables
-# Auto: Uses youtube-po-token-generator library if manual not provided
+# Auto: Uses youtube-po-token-generator CLI (NPM package) if manual not provided
 
 MANUAL_PO_TOKEN = os.getenv("YOUTUBE_PO_TOKEN", "")
 MANUAL_VISITOR_DATA = os.getenv("YOUTUBE_VISITOR_DATA", "")
@@ -70,33 +70,65 @@ _auto_token_cache: dict = {"po_token": None, "visitor_data": None, "generated_at
 
 def get_auto_po_token() -> tuple[str | None, str | None]:
     """
-    Auto-generate PO Token using youtube-po-token-generator.
+    Auto-generate PO Token by running youtube-po-token-generator CLI.
+    This is an NPM package that outputs JSON with poToken and visitorData.
     Returns (po_token, visitor_data) or (None, None) on failure.
     """
     global _auto_token_cache
+    import subprocess
+    import json
+    from datetime import datetime
     
     try:
-        from youtube_po_token_generator import YoutubePOTokenGenerator
+        logger.info("🔄 Generating Auto Token via youtube-po-token-generator CLI...")
         
-        logger.info("🔄 Generating Auto Token via youtube-po-token-generator...")
-        generator = YoutubePOTokenGenerator()
-        token_data = generator.generate()
+        # Run the NPM CLI tool and capture JSON output
+        result = subprocess.run(
+            ["youtube-po-token-generator"],
+            capture_output=True,
+            text=True,
+            timeout=60  # 60 second timeout
+        )
         
+        if result.returncode != 0:
+            logger.error(f"❌ youtube-po-token-generator failed: {result.stderr}")
+            return None, None
+        
+        # Parse JSON output
+        output = result.stdout.strip()
+        
+        # Handle case where output might have extra text before JSON
+        # Find the first '{' to start of JSON
+        json_start = output.find('{')
+        if json_start == -1:
+            logger.error(f"❌ No JSON found in output: {output[:200]}")
+            return None, None
+        
+        json_str = output[json_start:]
+        token_data = json.loads(json_str)
+        
+        # Extract tokens (handle different key formats)
         po_token = token_data.get("poToken") or token_data.get("po_token")
         visitor_data = token_data.get("visitorData") or token_data.get("visitor_data")
         
         if po_token:
             _auto_token_cache["po_token"] = po_token
             _auto_token_cache["visitor_data"] = visitor_data
-            _auto_token_cache["generated_at"] = os.popen("date").read().strip()
+            _auto_token_cache["generated_at"] = datetime.now().isoformat()
             logger.info("✅ Auto Token generated successfully")
             return po_token, visitor_data
         else:
-            logger.warning("⚠️ Auto Token generation returned empty token")
+            logger.warning(f"⚠️ Auto Token generation returned empty token. Output: {output[:200]}")
             return None, None
             
-    except ImportError:
-        logger.warning("⚠️ youtube-po-token-generator not installed")
+    except FileNotFoundError:
+        logger.warning("⚠️ youtube-po-token-generator CLI not found (npm package not installed)")
+        return None, None
+    except subprocess.TimeoutExpired:
+        logger.error("❌ Auto Token generation timed out after 60 seconds")
+        return None, None
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Failed to parse JSON from youtube-po-token-generator: {e}")
         return None, None
     except Exception as e:
         logger.error(f"❌ Auto Token generation failed: {e}")
@@ -105,7 +137,7 @@ def get_auto_po_token() -> tuple[str | None, str | None]:
 
 def get_po_token() -> tuple[str | None, str | None, str]:
     """
-    Get PO Token with priority: Manual > Cached Auto > Fresh Auto.
+    Get PO Token with priority: Manual > Cached Auto > Fresh Auto > None (guest fallback).
     Returns (po_token, visitor_data, source_label).
     """
     # Priority 1: Manual token from environment variable
@@ -123,8 +155,8 @@ def get_po_token() -> tuple[str | None, str | None, str]:
     if po_token:
         return po_token, visitor_data, "auto_fresh"
     
-    # No token available
-    logger.warning("⚠️ No PO Token available (manual or auto)")
+    # No token available - will fallback to mweb guest mode
+    logger.warning("⚠️ No PO Token available - falling back to mweb guest mode")
     return None, None, "none"
 
 
@@ -218,12 +250,11 @@ def startup_checks():
         logger.info("✅ Using Manual Token from YOUTUBE_PO_TOKEN env var")
     else:
         logger.info("ℹ️  No manual YOUTUBE_PO_TOKEN - will use auto-generation")
-        # Try to verify auto-generation works
-        try:
-            from youtube_po_token_generator import YoutubePOTokenGenerator
-            logger.info("✅ youtube-po-token-generator available for auto tokens")
-        except ImportError:
-            logger.warning("⚠️  youtube-po-token-generator not installed")
+        # Verify youtube-po-token-generator CLI is available
+        if shutil.which("youtube-po-token-generator"):
+            logger.info("✅ youtube-po-token-generator CLI available for auto tokens")
+        else:
+            logger.warning("⚠️  youtube-po-token-generator CLI not found (npm install -g youtube-po-token-generator)")
 
     if MANUAL_VISITOR_DATA:
         logger.info("✅ YOUTUBE_VISITOR_DATA configured")

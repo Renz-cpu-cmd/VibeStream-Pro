@@ -54,12 +54,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # This is REQUIRED to bypass the Dec 20th 2025 YouTube update affecting Render IPs
 RUN pip install -U --pre "yt-dlp[default,curl-cffi]"
 
-# Install youtube-po-token-generator for automatic PO Token generation
+# Install youtube-po-token-generator via NPM (NOT pip - it's an NPM package)
 # This makes the backend 'self-healing' - no manual token extraction needed
-RUN pip install youtube-po-token-generator
+RUN npm install -g youtube-po-token-generator
 
 # Verify installations
 RUN yt-dlp --version
+RUN youtube-po-token-generator --help || echo "youtube-po-token-generator installed"
 
 # Copy application code (excluding cookies.txt for security)
 COPY main.py .
