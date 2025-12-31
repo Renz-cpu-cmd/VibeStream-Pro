@@ -179,6 +179,7 @@ export default function HomePage() {
   // New: Tab switcher state (audio vs video)
   const [activeTab, setActiveTab] = useState<"audio" | "video">("audio");
   const [videoResolution, setVideoResolution] = useState<"360" | "480" | "720" | "1080" | "best">("720");
+  const [audioQuality, setAudioQuality] = useState<"64" | "128" | "192" | "256" | "320">("192");
 
   const PAYMENT_NUMBER = "09543718983";
 
@@ -340,7 +341,7 @@ export default function HomePage() {
 
     try {
       const downloadUrl = videoInfo?.url || url;
-      let queryParams = `url=${encodeURIComponent(downloadUrl)}&mode=${audioMode}`;
+      let queryParams = `url=${encodeURIComponent(downloadUrl)}&mode=${audioMode}&quality=${audioQuality}`;
       if (enableTrim && startTime < endTime) {
         queryParams += `&start_time=${startTime}&end_time=${endTime}`;
       }
@@ -666,6 +667,43 @@ export default function HomePage() {
                                   <span className="text-xl">{mode.icon}</span>
                                   <span className="mt-1 text-xs font-semibold">{mode.label}</span>
                                   <span className="text-[10px] text-gray-500">{mode.desc}</span>
+                                </motion.button>
+                              ))}
+                            </div>
+                          </motion.div>
+
+                          {/* Audio Quality Selector */}
+                          <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 0.15 }}
+                            className="mt-4"
+                          >
+                            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-500">
+                              🎚️ Audio Quality (Bitrate)
+                            </p>
+                            <div className="grid grid-cols-5 gap-2">
+                              {[
+                                { value: "64", label: "64", desc: "kbps" },
+                                { value: "128", label: "128", desc: "kbps" },
+                                { value: "192", label: "192", desc: "kbps" },
+                                { value: "256", label: "256", desc: "kbps" },
+                                { value: "320", label: "320", desc: "kbps" },
+                              ].map((quality) => (
+                                <motion.button
+                                  key={quality.value}
+                                  whileHover={{ scale: 1.02 }}
+                                  whileTap={{ scale: 0.98 }}
+                                  onClick={() => setAudioQuality(quality.value as typeof audioQuality)}
+                                  disabled={downloading}
+                                  className={`rounded-xl border px-2 py-2 text-center transition-all ${
+                                    audioQuality === quality.value
+                                      ? "border-purple-500/50 bg-purple-500/20 text-purple-300"
+                                      : "border-white/10 bg-white/5 text-gray-400 hover:border-white/20 hover:bg-white/10"
+                                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                                >
+                                  <div className="text-xs font-semibold">{quality.label}</div>
+                                  <div className="text-[10px] text-gray-500">{quality.desc}</div>
                                 </motion.button>
                               ))}
                             </div>
