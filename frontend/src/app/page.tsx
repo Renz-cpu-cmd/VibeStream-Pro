@@ -460,29 +460,25 @@ export default function HomePage() {
                     </div>
                   )}
 
-                  {/* Fallback Download Option - shown when server download fails */}
+                  {/* Fallback Notice - shown when server download fails */}
                   {showFallback && !downloading && (
                     <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/30 p-4">
-                      <p className="text-sm text-amber-200 mb-3">
-                        ⚠️ Server download blocked. Use your browser instead:
-                      </p>
-                      <button
-                        onClick={() => {
-                          const videoUrl = videoInfo?.url || url;
-                          // Open Cobalt with the video URL pre-filled
-                          const cobaltUrl = `https://cobalt.tools/?url=${encodeURIComponent(videoUrl)}`;
-                          window.open(cobaltUrl, '_blank');
-                        }}
-                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 py-3 font-semibold text-white shadow-lg transition hover:brightness-105"
-                      >
-                        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                        Download via Cobalt (opens in new tab)
-                      </button>
-                      <p className="mt-2 text-xs text-gray-400 text-center">
-                        This uses your browser directly - works from any location!
-                      </p>
+                      <div className="flex items-start gap-3">
+                        <div className="text-2xl">🚧</div>
+                        <div>
+                          <h4 className="font-semibold text-amber-200 mb-1">
+                            YouTube Downloads Temporarily Unavailable
+                          </h4>
+                          <p className="text-sm text-gray-300 mb-3">
+                            YouTube is currently blocking all third-party download services (including Cobalt, Invidious, and others). 
+                            We&apos;re actively monitoring for solutions.
+                          </p>
+                          <div className="text-xs text-gray-400 space-y-1">
+                            <p>💡 <strong>Workaround:</strong> Use <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">yt-dlp</a> on your local computer - it still works with residential IPs!</p>
+                            <p>📢 Follow <a href="https://github.com/yt-dlp/yt-dlp/issues" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">yt-dlp updates</a> for the latest workarounds.</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
