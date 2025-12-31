@@ -10,7 +10,8 @@ export interface LibrarySong {
   duration: number;
   durationStr: string;
   thumbnail: string | null;
-  audioBlob: Blob;
+  audioBlob?: Blob; // Optional when using audioUrl directly
+  audioUrl?: string; // Direct URL for streaming (e.g., from MP3 converter)
   downloadedAt: number;
   url: string;
   mode: "standard" | "minus_one" | "bass_boost" | "nightcore";

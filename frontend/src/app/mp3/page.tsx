@@ -208,9 +208,15 @@ export default function MP3Page() {
         id: `mp3-${Date.now()}`,
         title: audioInfo.title,
         artist: audioInfo.uploader || "Unknown Artist",
-        duration: audioInfo.duration_str,
-        thumbnail: audioInfo.thumbnail || undefined,
+        duration: audioInfo.duration || 0,
+        durationStr: audioInfo.duration_str,
+        thumbnail: audioInfo.thumbnail,
+        audioBlob: new Blob(), // Not stored, just for type compatibility
         audioUrl: previewUrl,
+        downloadedAt: Date.now(),
+        url: url,
+        mode: "standard",
+        fileSize: 0,
       });
     }
   };

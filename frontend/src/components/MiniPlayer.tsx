@@ -26,8 +26,14 @@ export default function MiniPlayer({ song, onClose, onNext, onPrevious }: MiniPl
   const [showVisualizer, setShowVisualizer] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
-  // Create object URL for audio blob
+  // Create object URL for audio blob or use direct URL
   useEffect(() => {
+    // If song has a direct audioUrl, use it
+    if (song?.audioUrl) {
+      setAudioUrl(song.audioUrl);
+      return;
+    }
+    // Otherwise create object URL from blob
     if (song?.audioBlob) {
       const url = URL.createObjectURL(song.audioBlob);
       setAudioUrl(url);
