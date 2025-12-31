@@ -37,6 +37,8 @@ export default function HomePage() {
   const [enableTrim, setEnableTrim] = useState(false);
   const [startTime, setStartTime] = useState<number>(0);
   const [endTime, setEndTime] = useState<number>(0);
+  // Fallback download state
+  const [showFallback, setShowFallback] = useState(false);
 
   // GCash/Maya number - update with your actual number
   const PAYMENT_NUMBER = "09543718983";
@@ -108,6 +110,7 @@ export default function HomePage() {
     setLoading(true);
     setError(null);
     setVideoInfo(null);
+    setShowFallback(false);
     // Reset trim settings when analyzing new video
     setEnableTrim(false);
     setStartTime(0);
@@ -193,9 +196,9 @@ export default function HomePage() {
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : "Download failed";
       setError(errorMsg);
-      // Show alert for critical errors (500 errors)
-      if (errorMsg.includes("ffmpeg") || errorMsg.includes("500") || errorMsg.includes("conversion")) {
-        alert(`Download Error:\n\n${errorMsg}\n\nPlease make sure ffmpeg.exe and ffprobe.exe are in the backend folder.`);
+      // Show fallback option for server-side download failures
+      if (errorMsg.includes("Download failed") || errorMsg.includes("500") || errorMsg.includes("blocking") || errorMsg.includes("bot")) {
+        setShowFallback(true);
       }
     } finally {
       setDownloading(false);
@@ -454,6 +457,32 @@ export default function HomePage() {
                         />
                       </div>
                       <span>{downloadStatus}</span>
+                    </div>
+                  )}
+
+                  {/* Fallback Download Option - shown when server download fails */}
+                  {showFallback && !downloading && (
+                    <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/30 p-4">
+                      <p className="text-sm text-amber-200 mb-3">
+                        ⚠️ Server download blocked. Use your browser instead:
+                      </p>
+                      <button
+                        onClick={() => {
+                          const videoUrl = videoInfo?.url || url;
+                          // Open Cobalt with the video URL pre-filled
+                          const cobaltUrl = `https://cobalt.tools/?url=${encodeURIComponent(videoUrl)}`;
+                          window.open(cobaltUrl, '_blank');
+                        }}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 py-3 font-semibold text-white shadow-lg transition hover:brightness-105"
+                      >
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                        Download via Cobalt (opens in new tab)
+                      </button>
+                      <p className="mt-2 text-xs text-gray-400 text-center">
+                        This uses your browser directly - works from any location!
+                      </p>
                     </div>
                   )}
                 </div>
