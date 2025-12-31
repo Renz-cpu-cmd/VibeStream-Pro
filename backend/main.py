@@ -126,13 +126,16 @@ def startup_checks():
     # Cookie file check
     if USE_COOKIES:
         logger.info("🍪 Cookie file found - authenticated mode ENABLED")
+    
+    # YouTube API check
+    if YOUTUBE_API_KEY:
+        logger.info("🔑 YouTube Data API key configured - using official API")
     else:
-        logger.info("ℹ️  No cookies.txt - using Invidious/Piped fallback")
+        logger.warning("⚠️  No YOUTUBE_API_KEY - set it for reliable metadata!")
 
     # Feature summary
-    logger.info("📺 Primary: yt-dlp with TV/iOS clients")
-    logger.info("🔄 Fallback: Invidious/Piped APIs (no cookies needed)")
-    logger.info("✅ Web Integrity bypass: skip webpage/configs/dash/hls")
+    logger.info("📺 Primary: yt-dlp with mweb/tv/ios/android clients")
+    logger.info("🔄 Fallback: YouTube API → Invidious → Piped → Cobalt")
     logger.info("✅ Rate limiting: 5 downloads/hour per IP")
 
 
@@ -187,14 +190,12 @@ def sanitize_filename(name: str) -> str:
 
 def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> dict:
     """
-    Build yt-dlp options with Late-2025 TV Client Bypass.
+    Build yt-dlp options with Late-2025 bypass strategies.
     
     Key settings (December 2025):
-    - TV + iOS clients (most stable for Render datacenter IPs)
-    - Web Integrity bypass (skip webpage/configs/dash/hls)
-    - player_params: atfg=1 forces TV-specific parameters
-    - curl-cffi for TLS fingerprint impersonation
-    - Cookie authentication if cookies.txt exists
+    - Multiple client fallbacks: mweb → tv → ios → android
+    - TLS fingerprint impersonation via curl-cffi
+    - Retries and fallback extraction
     """
     opts: dict = {
         # Core settings
@@ -202,16 +203,16 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "logger": logger,
         "no_color": True,
         "noplaylist": True,
-        # TLS fingerprint impersonation
-        "impersonate": None,
-        "request_handler": "curl_cffi",
-        # TV Client Bypass (December 2025)
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
+        # TLS fingerprint impersonation (Chrome-like)
+        "impersonate": "chrome",
+        # Multiple client fallback strategy (Dec 2025)
+        # mweb (mobile web) often works when others fail
         "extractor_args": {
             "youtube": {
-                "player_client": ["tv", "ios"],
-                "player_skip": ["webpage", "configs"],
-                "skip": ["dash", "hls"],
-                "player_params": "atfg=1",  # Forces TV-specific parameters
+                "player_client": ["mweb", "tv", "ios", "android"],
             }
         },
     }
@@ -265,6 +266,97 @@ def prepare_url(input_text: str) -> str:
     # It's a search query - use ytsearch: prefix
     logger.info(f"🔍 Search query detected, using ytsearch1:")
     return f"ytsearch1:{text}"
+
+
+# ---------- YouTube Data API v3 (Official - most reliable) ----------
+# Free tier: 10,000 requests/day - Get your key from Google Cloud Console
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+
+
+def get_youtube_api_video_info(video_id: str) -> dict | None:
+    """Fetch video info using official YouTube Data API v3."""
+    if not YOUTUBE_API_KEY:
+        return None
+    
+    try:
+        url = "https://www.googleapis.com/youtube/v3/videos"
+        params = {
+            "part": "snippet,contentDetails",
+            "id": video_id,
+            "key": YOUTUBE_API_KEY,
+        }
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                items = data.get("items", [])
+                if items:
+                    item = items[0]
+                    snippet = item.get("snippet", {})
+                    content = item.get("contentDetails", {})
+                    
+                    # Parse duration (ISO 8601 format like PT4M13S)
+                    duration_str = content.get("duration", "PT0S")
+                    duration = parse_iso8601_duration(duration_str)
+                    
+                    logger.info("✅ YouTube Data API successful")
+                    return {
+                        "title": snippet.get("title", "Unknown"),
+                        "thumbnail": snippet.get("thumbnails", {}).get("high", {}).get("url"),
+                        "duration": duration,
+                        "uploader": snippet.get("channelTitle"),
+                        "video_id": video_id,
+                    }
+    except Exception as e:
+        logger.warning(f"YouTube Data API failed: {e}")
+    return None
+
+
+def search_youtube_api(query: str) -> dict | None:
+    """Search using official YouTube Data API v3."""
+    if not YOUTUBE_API_KEY:
+        return None
+    
+    try:
+        url = "https://www.googleapis.com/youtube/v3/search"
+        params = {
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "maxResults": 1,
+            "key": YOUTUBE_API_KEY,
+        }
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                items = data.get("items", [])
+                if items:
+                    item = items[0]
+                    video_id = item.get("id", {}).get("videoId")
+                    snippet = item.get("snippet", {})
+                    logger.info("✅ YouTube API search successful")
+                    return {
+                        "videoId": video_id,
+                        "title": snippet.get("title"),
+                        "author": snippet.get("channelTitle"),
+                        "videoThumbnails": [{"url": snippet.get("thumbnails", {}).get("high", {}).get("url")}],
+                    }
+    except Exception as e:
+        logger.warning(f"YouTube API search failed: {e}")
+    return None
+
+
+def parse_iso8601_duration(duration: str) -> int:
+    """Parse ISO 8601 duration (PT4M13S) to seconds."""
+    import re
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration)
+    if match:
+        hours = int(match.group(1) or 0)
+        minutes = int(match.group(2) or 0)
+        seconds = int(match.group(3) or 0)
+        return hours * 3600 + minutes * 60 + seconds
+    return 0
 
 
 # ---------- Invidious/Piped Fallback API ----------
@@ -720,45 +812,70 @@ def analyze_video(request: Request, body: AnalyzeRequest):
         yt_dlp_error = str(e)
         logger.warning(f"yt-dlp failed, trying fallback: {e}")
 
-    # Fallback to Invidious/Piped if yt-dlp failed
+    # Fallback chain: YouTube API → Invidious → Piped
     if info is None:
-        logger.info("🔄 Attempting Invidious/Piped fallback...")
+        logger.info("🔄 Attempting fallback APIs...")
         
+        # Try YouTube Data API first (most reliable, official)
         if is_search:
-            # Search using Invidious first, then Piped
-            search_result = search_invidious(input_text)
-            if not search_result:
-                search_result = search_piped(input_text)
-            
-            if search_result:
-                video_id = search_result.get("videoId")
+            api_result = search_youtube_api(input_text)
+            if api_result:
+                video_id = api_result.get("videoId")
                 info = {
-                    "title": search_result.get("title", "Unknown"),
-                    "thumbnail": search_result.get("videoThumbnails", [{}])[0].get("url") if search_result.get("videoThumbnails") else None,
-                    "duration": search_result.get("lengthSeconds"),
-                    "uploader": search_result.get("author"),
+                    "title": api_result.get("title", "Unknown"),
+                    "thumbnail": api_result.get("videoThumbnails", [{}])[0].get("url") if api_result.get("videoThumbnails") else None,
+                    "duration": None,  # Search doesn't return duration
+                    "uploader": api_result.get("author"),
                     "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
                 }
         elif video_id:
-            # Direct video - try Invidious then Piped
-            inv_info = get_invidious_video_info(video_id)
-            if inv_info:
+            api_info = get_youtube_api_video_info(video_id)
+            if api_info:
                 info = {
-                    "title": inv_info.get("title", "Unknown"),
-                    "thumbnail": inv_info.get("videoThumbnails", [{}])[0].get("url") if inv_info.get("videoThumbnails") else None,
-                    "duration": inv_info.get("lengthSeconds"),
-                    "uploader": inv_info.get("author"),
+                    "title": api_info.get("title", "Unknown"),
+                    "thumbnail": api_info.get("thumbnail"),
+                    "duration": api_info.get("duration"),
+                    "uploader": api_info.get("uploader"),
                     "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
                 }
-            else:
-                piped_info = get_piped_video_info(video_id)
-                if piped_info:
+        
+        # If YouTube API failed, try Invidious/Piped
+        if info is None:
+            if is_search:
+                # Search using Invidious first, then Piped
+                search_result = search_invidious(input_text)
+                if not search_result:
+                    search_result = search_piped(input_text)
+                
+                if search_result:
+                    video_id = search_result.get("videoId")
                     info = {
-                        "title": piped_info.get("title", "Unknown"),
-                        "thumbnail": piped_info.get("thumbnailUrl"),
-                        "duration": piped_info.get("duration"),
-                        "uploader": piped_info.get("uploader"),
+                        "title": search_result.get("title", "Unknown"),
+                        "thumbnail": search_result.get("videoThumbnails", [{}])[0].get("url") if search_result.get("videoThumbnails") else None,
+                        "duration": search_result.get("lengthSeconds"),
+                        "uploader": search_result.get("author"),
                         "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                    }
+            elif video_id:
+                # Direct video - try Invidious then Piped
+                inv_info = get_invidious_video_info(video_id)
+                if inv_info:
+                    info = {
+                        "title": inv_info.get("title", "Unknown"),
+                        "thumbnail": inv_info.get("videoThumbnails", [{}])[0].get("url") if inv_info.get("videoThumbnails") else None,
+                        "duration": inv_info.get("lengthSeconds"),
+                        "uploader": inv_info.get("author"),
+                        "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                    }
+                else:
+                    piped_info = get_piped_video_info(video_id)
+                    if piped_info:
+                        info = {
+                            "title": piped_info.get("title", "Unknown"),
+                            "thumbnail": piped_info.get("thumbnailUrl"),
+                            "duration": piped_info.get("duration"),
+                            "uploader": piped_info.get("uploader"),
+                            "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
                     }
 
     if info is None:
