@@ -174,6 +174,10 @@ export default function HomePage() {
   const [endTime, setEndTime] = useState<number>(0);
   const [showFallback, setShowFallback] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  
+  // New: Tab switcher state (audio vs video)
+  const [activeTab, setActiveTab] = useState<"audio" | "video">("audio");
+  const [videoResolution, setVideoResolution] = useState<"360" | "480" | "720" | "1080" | "best">("720");
 
   const PAYMENT_NUMBER = "09543718983";
 
@@ -275,6 +279,56 @@ export default function HomePage() {
     setDownloading(true);
     setError(null);
 
+    // Different handling for audio vs video
+    if (activeTab === "video") {
+      // VIDEO DOWNLOAD
+      setDownloadStatus(`📹 Downloading ${videoResolution}p video...`);
+      
+      try {
+        const downloadUrl = videoInfo?.url || url;
+        const queryParams = `url=${encodeURIComponent(downloadUrl)}&resolution=${videoResolution}`;
+        
+        const res = await fetch(`${API_BASE}/download-video?${queryParams}`);
+
+        if (!res.ok) {
+          let errorMessage = "Video download failed";
+          try {
+            const data = await res.json();
+            errorMessage = data.detail || errorMessage;
+          } catch {
+            errorMessage = `Server error (${res.status}): ${res.statusText}`;
+          }
+          throw new Error(errorMessage);
+        }
+
+        setDownloadStatus("Download complete! Saving video...");
+
+        const blob = await res.blob();
+        const filename = videoInfo?.title?.replace(/[\\/*?:"<>|]/g, "") || "video";
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${filename}_${videoResolution}p.mp4`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+
+        addToHistory({
+          url: url.trim(),
+          title: videoInfo?.title || filename,
+        });
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : "Download failed";
+        setError(errorMsg);
+        if (errorMsg.includes("Download failed") || errorMsg.includes("500") || errorMsg.includes("blocking") || errorMsg.includes("bot")) {
+          setShowFallback(true);
+        }
+      } finally {
+        setDownloading(false);
+        setDownloadStatus("");
+      }
+      return;
+    }
+
+    // AUDIO DOWNLOAD (existing logic)
     const modeMessages: Record<string, string> = {
       standard: enableTrim ? "✂️ Trimming & converting..." : "Converting to MP3...",
       minus_one: "🎤 AI is removing vocals... This may take 1-2 minutes.",
@@ -330,26 +384,53 @@ export default function HomePage() {
   };
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-dark-900">
+    <main className="relative min-h-screen overflow-hidden">
       {/* Animated Mesh Gradient Background */}
-      <div className="fixed inset-0 -z-10">
-        {/* Base gradient */}
-        <div className="absolute inset-0 bg-gradient-to-br from-dark-900 via-dark-800 to-dark-900" />
+      <div className="fixed inset-0 z-0 overflow-hidden">
+        {/* Base dark gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-gray-950 via-slate-900 to-gray-950" />
         
-        {/* Animated gradient orbs */}
-        <div className="absolute top-0 left-1/4 h-[600px] w-[600px] rounded-full bg-purple-600/20 blur-[120px] animate-float" />
-        <div className="absolute bottom-0 right-1/4 h-[500px] w-[500px] rounded-full bg-pink-600/15 blur-[100px] animate-float-reverse" />
-        <div className="absolute top-1/2 left-1/2 h-[400px] w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-600/10 blur-[80px] animate-float-slow" />
-        <div className="absolute bottom-1/4 left-1/3 h-[300px] w-[300px] rounded-full bg-emerald-600/10 blur-[60px] animate-pulse-glow" />
-        
-        {/* Mesh overlay */}
+        {/* Animated gradient orbs - more vibrant colors */}
         <div 
-          className="absolute inset-0 opacity-30"
+          className="absolute -top-40 -left-40 h-[500px] w-[500px] rounded-full opacity-70"
           style={{
-            backgroundImage: `radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0)`,
-            backgroundSize: "40px 40px",
+            background: 'radial-gradient(circle, rgba(147, 51, 234, 0.5) 0%, rgba(147, 51, 234, 0) 70%)',
+            animation: 'float 8s ease-in-out infinite',
           }}
         />
+        <div 
+          className="absolute -bottom-40 -right-40 h-[600px] w-[600px] rounded-full opacity-60"
+          style={{
+            background: 'radial-gradient(circle, rgba(236, 72, 153, 0.4) 0%, rgba(236, 72, 153, 0) 70%)',
+            animation: 'floatReverse 10s ease-in-out infinite',
+          }}
+        />
+        <div 
+          className="absolute top-1/3 right-1/4 h-[400px] w-[400px] rounded-full opacity-50"
+          style={{
+            background: 'radial-gradient(circle, rgba(6, 182, 212, 0.4) 0%, rgba(6, 182, 212, 0) 70%)',
+            animation: 'float 12s ease-in-out infinite',
+          }}
+        />
+        <div 
+          className="absolute bottom-1/3 left-1/4 h-[350px] w-[350px] rounded-full opacity-40"
+          style={{
+            background: 'radial-gradient(circle, rgba(16, 185, 129, 0.35) 0%, rgba(16, 185, 129, 0) 70%)',
+            animation: 'pulse-glow 3s ease-in-out infinite',
+          }}
+        />
+        
+        {/* Subtle grid overlay */}
+        <div 
+          className="absolute inset-0 opacity-20"
+          style={{
+            backgroundImage: `radial-gradient(circle at 1px 1px, rgba(255,255,255,0.15) 1px, transparent 0)`,
+            backgroundSize: "50px 50px",
+          }}
+        />
+        
+        {/* Gradient noise/grain overlay for texture */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/20" />
       </div>
 
       {/* Main Content */}
@@ -412,6 +493,7 @@ export default function HomePage() {
                       </svg>
                     </div>
                     <input
+                      suppressHydrationWarning
                       type="text"
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
@@ -423,6 +505,7 @@ export default function HomePage() {
                     />
                   </div>
                   <motion.button
+                    suppressHydrationWarning
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={handleAnalyze}
@@ -484,7 +567,7 @@ export default function HomePage() {
                         alt={videoInfo.title}
                         className="h-56 w-full object-cover"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-dark-900 via-dark-900/50 to-transparent" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0f] via-[#0a0a0f]/50 to-transparent" />
                       {/* Duration badge */}
                       <div className="absolute bottom-4 right-4 rounded-lg bg-black/60 px-2 py-1 text-sm font-medium text-white backdrop-blur-sm">
                         {videoInfo.duration_str}
@@ -505,108 +588,201 @@ export default function HomePage() {
                       </p>
                     )}
 
-                    {/* Processing Options */}
-                    <motion.div
-                      variants={staggerContainer}
-                      initial="hidden"
-                      animate="visible"
-                      className="mt-5"
-                    >
-                      <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">
-                        🎛️ Audio Mode
-                      </p>
-                      <div className="grid grid-cols-2 gap-2">
-                        {[
-                          { value: "standard", label: "Standard", icon: "🎵", desc: "Original audio" },
-                          { value: "minus_one", label: "Minus One", icon: "🎤", desc: "AI vocal removal" },
-                          { value: "bass_boost", label: "Bass Boost", icon: "🔊", desc: "+10dB bass" },
-                          { value: "nightcore", label: "Nightcore", icon: "⚡", desc: "1.25x + pitch" },
-                        ].map((mode) => (
-                          <motion.button
-                            key={mode.value}
-                            variants={scaleIn}
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={() => setAudioMode(mode.value as typeof audioMode)}
-                            disabled={downloading}
-                            className={`flex flex-col items-center rounded-xl border p-3 text-center transition-all ${
-                              audioMode === mode.value
-                                ? "border-purple-500/50 bg-purple-500/20 text-white shadow-lg shadow-purple-500/20"
-                                : "border-white/10 bg-white/5 text-gray-300 hover:border-white/20 hover:bg-white/10"
-                            } disabled:cursor-not-allowed disabled:opacity-50`}
-                          >
-                            <span className="text-xl">{mode.icon}</span>
-                            <span className="mt-1 text-xs font-semibold">{mode.label}</span>
-                            <span className="text-[10px] text-gray-500">{mode.desc}</span>
-                          </motion.button>
-                        ))}
-                      </div>
-                    </motion.div>
-
-                    {/* Trim Controls */}
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.2 }}
-                      className="mt-4"
-                    >
-                      <label className="flex cursor-pointer items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={enableTrim}
-                          onChange={(e) => setEnableTrim(e.target.checked)}
-                          disabled={downloading}
-                          className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500"
+                    {/* Tab Switcher: Audio vs Video */}
+                    <div className="mt-5">
+                      <div className="relative flex rounded-xl border border-white/10 bg-white/5 p-1">
+                        {/* Sliding background */}
+                        <motion.div
+                          className="absolute top-1 bottom-1 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600"
+                          initial={false}
+                          animate={{
+                            left: activeTab === "audio" ? "4px" : "50%",
+                            right: activeTab === "audio" ? "50%" : "4px",
+                          }}
+                          transition={{ type: "spring", bounce: 0.2, duration: 0.5 }}
                         />
-                        <span className="text-xs font-medium text-gray-400">
-                          ✂️ Trim Audio
-                        </span>
-                      </label>
-                      
-                      <AnimatePresence>
-                        {enableTrim && (
+                        <button
+                          onClick={() => setActiveTab("audio")}
+                          className={`relative z-10 flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-colors ${
+                            activeTab === "audio" ? "text-white" : "text-gray-400 hover:text-gray-200"
+                          }`}
+                        >
+                          <span>🎵</span>
+                          <span>Audio (MP3)</span>
+                        </button>
+                        <button
+                          onClick={() => setActiveTab("video")}
+                          className={`relative z-10 flex-1 flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold transition-colors ${
+                            activeTab === "video" ? "text-white" : "text-gray-400 hover:text-gray-200"
+                          }`}
+                        >
+                          <span>🎬</span>
+                          <span>Video (MP4)</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Content based on active tab */}
+                    <AnimatePresence mode="wait">
+                      {activeTab === "audio" ? (
+                        <motion.div
+                          key="audio-options"
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: 20 }}
+                          transition={{ duration: 0.3 }}
+                        >
+                          {/* Audio Processing Options */}
                           <motion.div
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: "auto" }}
-                            exit={{ opacity: 0, height: 0 }}
-                            className="mt-3 flex gap-3 overflow-hidden"
+                            variants={staggerContainer}
+                            initial="hidden"
+                            animate="visible"
+                            className="mt-5"
                           >
-                            <div className="flex-1">
-                              <label className="block text-xs text-gray-500 mb-1">Start (sec)</label>
-                              <input
-                                type="number"
-                                min={0}
-                                max={videoInfo.duration || 9999}
-                                value={startTime}
-                                onChange={(e) => setStartTime(Math.max(0, Number(e.target.value)))}
-                                disabled={downloading}
-                                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none disabled:opacity-50"
-                              />
-                            </div>
-                            <div className="flex-1">
-                              <label className="block text-xs text-gray-500 mb-1">End (sec)</label>
-                              <input
-                                type="number"
-                                min={0}
-                                max={videoInfo.duration || 9999}
-                                value={endTime}
-                                onChange={(e) => setEndTime(Math.min(videoInfo.duration || 9999, Number(e.target.value)))}
-                                disabled={downloading}
-                                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none disabled:opacity-50"
-                              />
+                            <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">
+                              🎛️ Audio Mode
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              {[
+                                { value: "standard", label: "Standard", icon: "🎵", desc: "Original audio" },
+                                { value: "minus_one", label: "Minus One", icon: "🎤", desc: "AI vocal removal" },
+                                { value: "bass_boost", label: "Bass Boost", icon: "🔊", desc: "+10dB bass" },
+                                { value: "nightcore", label: "Nightcore", icon: "⚡", desc: "1.25x + pitch" },
+                              ].map((mode) => (
+                                <motion.button
+                                  key={mode.value}
+                                  variants={scaleIn}
+                                  whileHover={{ scale: 1.02 }}
+                                  whileTap={{ scale: 0.98 }}
+                                  onClick={() => setAudioMode(mode.value as typeof audioMode)}
+                                  disabled={downloading}
+                                  className={`flex flex-col items-center rounded-xl border p-3 text-center transition-all ${
+                                    audioMode === mode.value
+                                      ? "border-purple-500/50 bg-purple-500/20 text-white shadow-lg shadow-purple-500/20"
+                                      : "border-white/10 bg-white/5 text-gray-300 hover:border-white/20 hover:bg-white/10"
+                                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                                >
+                                  <span className="text-xl">{mode.icon}</span>
+                                  <span className="mt-1 text-xs font-semibold">{mode.label}</span>
+                                  <span className="text-[10px] text-gray-500">{mode.desc}</span>
+                                </motion.button>
+                              ))}
                             </div>
                           </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </motion.div>
+
+                          {/* Trim Controls */}
+                          <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 0.2 }}
+                            className="mt-4"
+                          >
+                            <label className="flex cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={enableTrim}
+                                onChange={(e) => setEnableTrim(e.target.checked)}
+                                disabled={downloading}
+                                className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500"
+                              />
+                              <span className="text-xs font-medium text-gray-400">
+                                ✂️ Trim Audio
+                              </span>
+                            </label>
+                            
+                            <AnimatePresence>
+                              {enableTrim && (
+                                <motion.div
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: "auto" }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  className="mt-3 flex gap-3 overflow-hidden"
+                                >
+                                  <div className="flex-1">
+                                    <label className="block text-xs text-gray-500 mb-1">Start (sec)</label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={videoInfo.duration || 9999}
+                                      value={startTime}
+                                      onChange={(e) => setStartTime(Math.max(0, Number(e.target.value)))}
+                                      disabled={downloading}
+                                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none disabled:opacity-50"
+                                    />
+                                  </div>
+                                  <div className="flex-1">
+                                    <label className="block text-xs text-gray-500 mb-1">End (sec)</label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={videoInfo.duration || 9999}
+                                      value={endTime}
+                                      onChange={(e) => setEndTime(Math.min(videoInfo.duration || 9999, Number(e.target.value)))}
+                                      disabled={downloading}
+                                      className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none disabled:opacity-50"
+                                    />
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </motion.div>
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="video-options"
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ duration: 0.3 }}
+                          className="mt-5"
+                        >
+                          {/* Video Resolution Options */}
+                          <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">
+                            📺 Video Resolution
+                          </p>
+                          <div className="grid grid-cols-5 gap-2">
+                            {[
+                              { value: "360", label: "360p", desc: "Low" },
+                              { value: "480", label: "480p", desc: "SD" },
+                              { value: "720", label: "720p", desc: "HD" },
+                              { value: "1080", label: "1080p", desc: "FHD" },
+                              { value: "best", label: "Best", desc: "Max" },
+                            ].map((res) => (
+                              <motion.button
+                                key={res.value}
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                                onClick={() => setVideoResolution(res.value as typeof videoResolution)}
+                                disabled={downloading}
+                                className={`flex flex-col items-center rounded-xl border p-3 text-center transition-all ${
+                                  videoResolution === res.value
+                                    ? "border-pink-500/50 bg-pink-500/20 text-white shadow-lg shadow-pink-500/20"
+                                    : "border-white/10 bg-white/5 text-gray-300 hover:border-white/20 hover:bg-white/10"
+                                } disabled:cursor-not-allowed disabled:opacity-50`}
+                              >
+                                <span className="text-sm font-bold">{res.label}</span>
+                                <span className="text-[10px] text-gray-500">{res.desc}</span>
+                              </motion.button>
+                            ))}
+                          </div>
+                          <p className="mt-3 text-xs text-gray-500 text-center">
+                            Higher resolution = larger file size & longer download time
+                          </p>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
 
                     {/* Download Button */}
                     <motion.button
                       whileHover={{ scale: 1.01 }}
                       whileTap={{ scale: 0.99 }}
                       onClick={handleDownload}
-                      disabled={downloading || (enableTrim && startTime >= endTime)}
-                      className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 py-4 font-semibold text-white shadow-lg shadow-emerald-500/25 transition-all hover:shadow-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={downloading || (activeTab === "audio" && enableTrim && startTime >= endTime)}
+                      className={`mt-5 flex w-full items-center justify-center gap-2 rounded-xl py-4 font-semibold text-white shadow-lg transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                        activeTab === "audio" 
+                          ? "bg-gradient-to-r from-emerald-500 to-green-500 shadow-emerald-500/25 hover:shadow-emerald-500/40"
+                          : "bg-gradient-to-r from-pink-500 to-rose-500 shadow-pink-500/25 hover:shadow-pink-500/40"
+                      }`}
                     >
                       {downloading ? (
                         <>
@@ -617,7 +793,7 @@ export default function HomePage() {
                           <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" />
                           </svg>
-                          Download MP3
+                          {activeTab === "audio" ? "Download MP3" : `Download MP4 (${videoResolution === "best" ? "Best" : videoResolution + "p"})`}
                         </>
                       )}
                     </motion.button>
@@ -629,7 +805,7 @@ export default function HomePage() {
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
-                          className="mt-3 text-center text-sm text-emerald-300"
+                          className={`mt-3 text-center text-sm ${activeTab === "audio" ? "text-emerald-300" : "text-pink-300"}`}
                         >
                           {downloadStatus}
                         </motion.div>
@@ -730,6 +906,7 @@ export default function HomePage() {
               </motion.a>
 
               <motion.button
+                suppressHydrationWarning
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setShowDonationModal(true)}

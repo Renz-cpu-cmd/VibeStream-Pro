@@ -1249,3 +1249,153 @@ def download_audio(
         media_type="audio/mpeg",
         headers={"Content-Disposition": f'attachment; filename="{output_filename}"'},
     )
+
+
+# ---------- Video Download Endpoint ----------
+class VideoResolution(str, Enum):
+    p360 = "360"
+    p480 = "480"
+    p720 = "720"
+    p1080 = "1080"
+    best = "best"
+
+
+@app.get("/download-video")
+@limiter.limit("3/hour")  # 3 video downloads per hour per IP (videos are larger)
+def download_video(
+    request: Request,
+    url: str = Query(..., description="Video URL or search query"),
+    resolution: VideoResolution = Query("720", description="Video resolution"),
+):
+    """
+    Download video as MP4 with specified resolution.
+    
+    Resolutions:
+    - 360: Low quality, small file
+    - 480: Standard definition
+    - 720: HD (default, good balance)
+    - 1080: Full HD
+    - best: Highest available quality
+    
+    Rate limited to 3 downloads per hour per IP (videos are larger than audio).
+    """
+    logger.info(f"Video download request received (resolution: {resolution})")
+
+    if not ffmpeg_available():
+        raise HTTPException(
+            status_code=500,
+            detail="ffmpeg not found. Server configuration error.",
+        )
+
+    input_text = url.strip()
+    is_search = not is_url(input_text)
+    video_id = extract_video_id(input_text) if not is_search else None
+    
+    # Prepare URL (add ytsearch1: prefix if it's a search query)
+    prepared_url = prepare_url(input_text)
+
+    # Build format string based on resolution
+    if resolution == VideoResolution.best:
+        format_str = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+    else:
+        height = resolution.value
+        format_str = f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/best[height<={height}]"
+
+    # Download options for video
+    ydl_opts = build_ydl_opts(for_download=False, include_ffmpeg=True)
+    info = None
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(prepared_url, download=False)
+            
+            # For search results, get the first entry
+            if info and "entries" in info:
+                entries = list(info["entries"])
+                info = entries[0] if entries else None
+    except Exception as e:
+        logger.warning(f"yt-dlp info fetch failed: {e}")
+
+    # Fallback to YouTube API for metadata
+    if info is None:
+        if is_search:
+            api_result = search_youtube_api(input_text)
+            if api_result:
+                video_id = api_result.get("videoId")
+                info = {
+                    "title": api_result.get("title", "video"),
+                    "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                }
+        elif video_id:
+            api_info = get_youtube_api_video_info(video_id)
+            if api_info:
+                info = {
+                    "title": api_info.get("title", "video"),
+                    "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                }
+
+    if info is None:
+        raise HTTPException(status_code=400, detail="No results found")
+
+    title = sanitize_filename(info.get("title", "video"))
+    actual_url = info.get("webpage_url") or info.get("url") or prepared_url
+
+    # Download to temp file
+    tmp_dir = tempfile.mkdtemp()
+    tmp_path = Path(tmp_dir)
+    
+    download_success = False
+
+    # Try yt-dlp video download
+    ydl_download_opts = build_ydl_opts(for_download=True, include_ffmpeg=True)
+    ydl_download_opts.update({
+        "format": format_str,
+        "outtmpl": str(tmp_path / "%(title)s.%(ext)s"),
+        "merge_output_format": "mp4",
+        # No postprocessors - keep as video
+    })
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_download_opts) as ydl:
+            ydl.download([actual_url])
+        download_success = True
+    except Exception as e:
+        logger.error(f"Video download failed: {e}")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Video download failed. YouTube is blocking requests from this server."
+        )
+
+    # Find the downloaded video file
+    video_files = list(tmp_path.glob("*.mp4")) + list(tmp_path.glob("*.webm")) + list(tmp_path.glob("*.mkv"))
+    if not video_files:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail="Video download failed - no video file found.")
+
+    video_file = video_files[0]
+    output_filename = f"{title}_{resolution.value}p.mp4"
+
+    logger.info(f"Video download complete, serving file: {output_filename}")
+
+    def iterfile():
+        try:
+            with open(video_file, "rb") as f:
+                yield from f
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            logger.info("🧹 Temp files cleaned up")
+
+    # Determine content type based on actual file extension
+    content_type = "video/mp4"
+    if video_file.suffix == ".webm":
+        content_type = "video/webm"
+    elif video_file.suffix == ".mkv":
+        content_type = "video/x-matroska"
+
+    return StreamingResponse(
+        iterfile(),
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{output_filename}"'},
+    )
+
