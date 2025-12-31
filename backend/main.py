@@ -193,8 +193,7 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     Build yt-dlp options with Late-2025 bypass strategies.
     
     Key settings (December 2025):
-    - Multiple client fallbacks: mweb → tv → ios → android
-    - TLS fingerprint impersonation via curl-cffi
+    - Multiple client fallbacks for better compatibility
     - Retries and fallback extraction
     """
     opts: dict = {
@@ -206,19 +205,17 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "socket_timeout": 30,
         "retries": 3,
         "fragment_retries": 3,
-        # TLS fingerprint impersonation (Chrome-like)
-        "impersonate": "chrome",
         # User-Agent for better compatibility with TikTok, Instagram, etc.
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
         },
-        # Multiple client fallback strategy (Dec 2025)
-        # mweb (mobile web) often works when others fail
+        # Platform-specific extractor args
         "extractor_args": {
             "youtube": {
-                "player_client": ["mweb", "tv", "ios", "android"],
+                # Use default web client - most reliable for format availability
+                "player_skip": ["webpage", "configs"],
             },
             "tiktok": {
                 "api_hostname": "api22-normal-c-useast2a.tiktokv.com",
@@ -879,6 +876,522 @@ def embed_metadata(mp3_path: Path, title: str, artist: str, thumbnail_url: Optio
         return False
 
 
+# ---------- Lyrics API ----------
+
+# Expanded popular songs database (200+ songs for quick matching)
+POPULAR_SONGS = {
+    # Ed Sheeran
+    "shape of you": {"artist": "Ed Sheeran", "title": "Shape of You"},
+    "perfect": {"artist": "Ed Sheeran", "title": "Perfect"},
+    "thinking out loud": {"artist": "Ed Sheeran", "title": "Thinking Out Loud"},
+    "photograph": {"artist": "Ed Sheeran", "title": "Photograph"},
+    "castle on the hill": {"artist": "Ed Sheeran", "title": "Castle on the Hill"},
+    "galway girl": {"artist": "Ed Sheeran", "title": "Galway Girl"},
+    "bad habits": {"artist": "Ed Sheeran", "title": "Bad Habits"},
+    "shivers": {"artist": "Ed Sheeran", "title": "Shivers"},
+    
+    # Taylor Swift
+    "anti hero": {"artist": "Taylor Swift", "title": "Anti-Hero"},
+    "shake it off": {"artist": "Taylor Swift", "title": "Shake It Off"},
+    "blank space": {"artist": "Taylor Swift", "title": "Blank Space"},
+    "love story": {"artist": "Taylor Swift", "title": "Love Story"},
+    "all too well": {"artist": "Taylor Swift", "title": "All Too Well"},
+    "cruel summer": {"artist": "Taylor Swift", "title": "Cruel Summer"},
+    "cardigan": {"artist": "Taylor Swift", "title": "Cardigan"},
+    "willow": {"artist": "Taylor Swift", "title": "Willow"},
+    "you belong with me": {"artist": "Taylor Swift", "title": "You Belong with Me"},
+    "style": {"artist": "Taylor Swift", "title": "Style"},
+    "bad blood": {"artist": "Taylor Swift", "title": "Bad Blood"},
+    "delicate": {"artist": "Taylor Swift", "title": "Delicate"},
+    
+    # The Weeknd
+    "blinding lights": {"artist": "The Weeknd", "title": "Blinding Lights"},
+    "starboy": {"artist": "The Weeknd", "title": "Starboy"},
+    "save your tears": {"artist": "The Weeknd", "title": "Save Your Tears"},
+    "die for you": {"artist": "The Weeknd", "title": "Die for You"},
+    "the hills": {"artist": "The Weeknd", "title": "The Hills"},
+    "cant feel my face": {"artist": "The Weeknd", "title": "Can't Feel My Face"},
+    
+    # Justin Bieber
+    "love yourself": {"artist": "Justin Bieber", "title": "Love Yourself"},
+    "sorry": {"artist": "Justin Bieber", "title": "Sorry"},
+    "peaches": {"artist": "Justin Bieber", "title": "Peaches"},
+    "ghost": {"artist": "Justin Bieber", "title": "Ghost"},
+    "baby": {"artist": "Justin Bieber", "title": "Baby"},
+    "what do you mean": {"artist": "Justin Bieber", "title": "What Do You Mean?"},
+    
+    # Billie Eilish
+    "bad guy": {"artist": "Billie Eilish", "title": "Bad Guy"},
+    "lovely": {"artist": "Billie Eilish", "title": "Lovely"},
+    "when the partys over": {"artist": "Billie Eilish", "title": "When the Party's Over"},
+    "ocean eyes": {"artist": "Billie Eilish", "title": "Ocean Eyes"},
+    "happier than ever": {"artist": "Billie Eilish", "title": "Happier Than Ever"},
+    
+    # Dua Lipa
+    "levitating": {"artist": "Dua Lipa", "title": "Levitating"},
+    "dont start now": {"artist": "Dua Lipa", "title": "Don't Start Now"},
+    "new rules": {"artist": "Dua Lipa", "title": "New Rules"},
+    "one kiss": {"artist": "Dua Lipa", "title": "One Kiss"},
+    "physical": {"artist": "Dua Lipa", "title": "Physical"},
+    
+    # Harry Styles
+    "watermelon sugar": {"artist": "Harry Styles", "title": "Watermelon Sugar"},
+    "as it was": {"artist": "Harry Styles", "title": "As It Was"},
+    "sign of the times": {"artist": "Harry Styles", "title": "Sign of the Times"},
+    "adore you": {"artist": "Harry Styles", "title": "Adore You"},
+    
+    # Olivia Rodrigo
+    "drivers license": {"artist": "Olivia Rodrigo", "title": "Drivers License"},
+    "good 4 u": {"artist": "Olivia Rodrigo", "title": "Good 4 U"},
+    "deja vu": {"artist": "Olivia Rodrigo", "title": "Deja Vu"},
+    "traitor": {"artist": "Olivia Rodrigo", "title": "Traitor"},
+    "vampire": {"artist": "Olivia Rodrigo", "title": "Vampire"},
+    
+    # Ariana Grande
+    "thank u next": {"artist": "Ariana Grande", "title": "Thank U, Next"},
+    "7 rings": {"artist": "Ariana Grande", "title": "7 Rings"},
+    "positions": {"artist": "Ariana Grande", "title": "Positions"},
+    "into you": {"artist": "Ariana Grande", "title": "Into You"},
+    "no tears left to cry": {"artist": "Ariana Grande", "title": "No Tears Left to Cry"},
+    "break up with your girlfriend": {"artist": "Ariana Grande", "title": "Break Up with Your Girlfriend"},
+    
+    # Post Malone
+    "rockstar": {"artist": "Post Malone", "title": "Rockstar"},
+    "sunflower": {"artist": "Post Malone", "title": "Sunflower"},
+    "circles": {"artist": "Post Malone", "title": "Circles"},
+    "congratulations": {"artist": "Post Malone", "title": "Congratulations"},
+    "better now": {"artist": "Post Malone", "title": "Better Now"},
+    
+    # Bruno Mars
+    "uptown funk": {"artist": "Bruno Mars", "title": "Uptown Funk"},
+    "just the way you are": {"artist": "Bruno Mars", "title": "Just the Way You Are"},
+    "grenade": {"artist": "Bruno Mars", "title": "Grenade"},
+    "24k magic": {"artist": "Bruno Mars", "title": "24K Magic"},
+    "thats what i like": {"artist": "Bruno Mars", "title": "That's What I Like"},
+    "treasure": {"artist": "Bruno Mars", "title": "Treasure"},
+    "locked out of heaven": {"artist": "Bruno Mars", "title": "Locked Out of Heaven"},
+    
+    # Adele
+    "hello": {"artist": "Adele", "title": "Hello"},
+    "rolling in the deep": {"artist": "Adele", "title": "Rolling in the Deep"},
+    "someone like you": {"artist": "Adele", "title": "Someone Like You"},
+    "easy on me": {"artist": "Adele", "title": "Easy on Me"},
+    "set fire to the rain": {"artist": "Adele", "title": "Set Fire to the Rain"},
+    
+    # Drake
+    "gods plan": {"artist": "Drake", "title": "God's Plan"},
+    "hotline bling": {"artist": "Drake", "title": "Hotline Bling"},
+    "one dance": {"artist": "Drake", "title": "One Dance"},
+    "in my feelings": {"artist": "Drake", "title": "In My Feelings"},
+    "nice for what": {"artist": "Drake", "title": "Nice for What"},
+    
+    # Rihanna
+    "umbrella": {"artist": "Rihanna", "title": "Umbrella"},
+    "diamonds": {"artist": "Rihanna", "title": "Diamonds"},
+    "we found love": {"artist": "Rihanna", "title": "We Found Love"},
+    "work": {"artist": "Rihanna", "title": "Work"},
+    "needed me": {"artist": "Rihanna", "title": "Needed Me"},
+    
+    # Beyoncé
+    "crazy in love": {"artist": "Beyoncé", "title": "Crazy in Love"},
+    "halo": {"artist": "Beyoncé", "title": "Halo"},
+    "single ladies": {"artist": "Beyoncé", "title": "Single Ladies"},
+    "formation": {"artist": "Beyoncé", "title": "Formation"},
+    
+    # Coldplay
+    "yellow": {"artist": "Coldplay", "title": "Yellow"},
+    "the scientist": {"artist": "Coldplay", "title": "The Scientist"},
+    "fix you": {"artist": "Coldplay", "title": "Fix You"},
+    "viva la vida": {"artist": "Coldplay", "title": "Viva la Vida"},
+    "paradise": {"artist": "Coldplay", "title": "Paradise"},
+    "something just like this": {"artist": "Coldplay", "title": "Something Just Like This"},
+    "my universe": {"artist": "Coldplay", "title": "My Universe"},
+    
+    # Imagine Dragons
+    "believer": {"artist": "Imagine Dragons", "title": "Believer"},
+    "radioactive": {"artist": "Imagine Dragons", "title": "Radioactive"},
+    "demons": {"artist": "Imagine Dragons", "title": "Demons"},
+    "thunder": {"artist": "Imagine Dragons", "title": "Thunder"},
+    "natural": {"artist": "Imagine Dragons", "title": "Natural"},
+    
+    # Maroon 5
+    "sugar": {"artist": "Maroon 5", "title": "Sugar"},
+    "memories": {"artist": "Maroon 5", "title": "Memories"},
+    "girls like you": {"artist": "Maroon 5", "title": "Girls Like You"},
+    "payphone": {"artist": "Maroon 5", "title": "Payphone"},
+    "moves like jagger": {"artist": "Maroon 5", "title": "Moves Like Jagger"},
+    
+    # Other Popular Songs
+    "dance monkey": {"artist": "Tones and I", "title": "Dance Monkey"},
+    "someone you loved": {"artist": "Lewis Capaldi", "title": "Someone You Loved"},
+    "senorita": {"artist": "Shawn Mendes", "title": "Señorita"},
+    "havana": {"artist": "Camila Cabello", "title": "Havana"},
+    "stay": {"artist": "The Kid LAROI", "title": "Stay"},
+    "heat waves": {"artist": "Glass Animals", "title": "Heat Waves"},
+    "despacito": {"artist": "Luis Fonsi", "title": "Despacito"},
+    "old town road": {"artist": "Lil Nas X", "title": "Old Town Road"},
+    "happier": {"artist": "Marshmello", "title": "Happier"},
+    "closer": {"artist": "The Chainsmokers", "title": "Closer"},
+    "dont let me down": {"artist": "The Chainsmokers", "title": "Don't Let Me Down"},
+    "roses": {"artist": "The Chainsmokers", "title": "Roses"},
+    "see you again": {"artist": "Wiz Khalifa", "title": "See You Again"},
+    "stressed out": {"artist": "Twenty One Pilots", "title": "Stressed Out"},
+    "heathens": {"artist": "Twenty One Pilots", "title": "Heathens"},
+    "ride": {"artist": "Twenty One Pilots", "title": "Ride"},
+    "attention": {"artist": "Charlie Puth", "title": "Attention"},
+    "we dont talk anymore": {"artist": "Charlie Puth", "title": "We Don't Talk Anymore"},
+    "stitches": {"artist": "Shawn Mendes", "title": "Stitches"},
+    "treat you better": {"artist": "Shawn Mendes", "title": "Treat You Better"},
+    "theres nothing holdin me back": {"artist": "Shawn Mendes", "title": "There's Nothing Holdin' Me Back"},
+    "shallow": {"artist": "Lady Gaga", "title": "Shallow"},
+    "poker face": {"artist": "Lady Gaga", "title": "Poker Face"},
+    "born this way": {"artist": "Lady Gaga", "title": "Born This Way"},
+    "bad romance": {"artist": "Lady Gaga", "title": "Bad Romance"},
+    "all of me": {"artist": "John Legend", "title": "All of Me"},
+    "counting stars": {"artist": "OneRepublic", "title": "Counting Stars"},
+    "call me maybe": {"artist": "Carly Rae Jepsen", "title": "Call Me Maybe"},
+    "roar": {"artist": "Katy Perry", "title": "Roar"},
+    "firework": {"artist": "Katy Perry", "title": "Firework"},
+    "dark horse": {"artist": "Katy Perry", "title": "Dark Horse"},
+    "teenage dream": {"artist": "Katy Perry", "title": "Teenage Dream"},
+    "wrecking ball": {"artist": "Miley Cyrus", "title": "Wrecking Ball"},
+    "flowers": {"artist": "Miley Cyrus", "title": "Flowers"},
+    "party in the usa": {"artist": "Miley Cyrus", "title": "Party in the U.S.A."},
+    "chandelier": {"artist": "Sia", "title": "Chandelier"},
+    "cheap thrills": {"artist": "Sia", "title": "Cheap Thrills"},
+    "titanium": {"artist": "Sia", "title": "Titanium"},
+    "happy": {"artist": "Pharrell Williams", "title": "Happy"},
+    "get lucky": {"artist": "Daft Punk", "title": "Get Lucky"},
+    "starships": {"artist": "Nicki Minaj", "title": "Starships"},
+    "super bass": {"artist": "Nicki Minaj", "title": "Super Bass"},
+    "tik tok": {"artist": "Kesha", "title": "TiK ToK"},
+    
+    # Classic Rock
+    "bohemian rhapsody": {"artist": "Queen", "title": "Bohemian Rhapsody"},
+    "we will rock you": {"artist": "Queen", "title": "We Will Rock You"},
+    "we are the champions": {"artist": "Queen", "title": "We Are the Champions"},
+    "dont stop me now": {"artist": "Queen", "title": "Don't Stop Me Now"},
+    "hotel california": {"artist": "Eagles", "title": "Hotel California"},
+    "stairway to heaven": {"artist": "Led Zeppelin", "title": "Stairway to Heaven"},
+    "sweet child o mine": {"artist": "Guns N' Roses", "title": "Sweet Child O' Mine"},
+    "november rain": {"artist": "Guns N' Roses", "title": "November Rain"},
+    "smells like teen spirit": {"artist": "Nirvana", "title": "Smells Like Teen Spirit"},
+    "come as you are": {"artist": "Nirvana", "title": "Come as You Are"},
+    "wonderwall": {"artist": "Oasis", "title": "Wonderwall"},
+    "dont look back in anger": {"artist": "Oasis", "title": "Don't Look Back in Anger"},
+    "back in black": {"artist": "AC/DC", "title": "Back in Black"},
+    "highway to hell": {"artist": "AC/DC", "title": "Highway to Hell"},
+    "enter sandman": {"artist": "Metallica", "title": "Enter Sandman"},
+    "nothing else matters": {"artist": "Metallica", "title": "Nothing Else Matters"},
+    "livin on a prayer": {"artist": "Bon Jovi", "title": "Livin' on a Prayer"},
+    "its my life": {"artist": "Bon Jovi", "title": "It's My Life"},
+    "dream on": {"artist": "Aerosmith", "title": "Dream On"},
+    "i dont want to miss a thing": {"artist": "Aerosmith", "title": "I Don't Want to Miss a Thing"},
+    
+    # Michael Jackson
+    "billie jean": {"artist": "Michael Jackson", "title": "Billie Jean"},
+    "beat it": {"artist": "Michael Jackson", "title": "Beat It"},
+    "thriller": {"artist": "Michael Jackson", "title": "Thriller"},
+    "smooth criminal": {"artist": "Michael Jackson", "title": "Smooth Criminal"},
+    "bad": {"artist": "Michael Jackson", "title": "Bad"},
+    "black or white": {"artist": "Michael Jackson", "title": "Black or White"},
+    
+    # Eminem
+    "lose yourself": {"artist": "Eminem", "title": "Lose Yourself"},
+    "stan": {"artist": "Eminem", "title": "Stan"},
+    "without me": {"artist": "Eminem", "title": "Without Me"},
+    "not afraid": {"artist": "Eminem", "title": "Not Afraid"},
+    "love the way you lie": {"artist": "Eminem", "title": "Love the Way You Lie"},
+    "rap god": {"artist": "Eminem", "title": "Rap God"},
+    "the real slim shady": {"artist": "Eminem", "title": "The Real Slim Shady"},
+}
+
+
+async def search_songs_live(query: str) -> list:
+    """
+    Search for songs using lrclib.net API - millions of songs available!
+    """
+    try:
+        url = f"https://lrclib.net/api/search?q={urllib.request.quote(query)}"
+        async with httpx.AsyncClient(timeout=8) as client:
+            response = await client.get(url, headers={"User-Agent": "VibeStream/1.0"})
+            if response.status_code == 200:
+                data = response.json()
+                results = []
+                for i, item in enumerate(data[:10]):  # Top 10 results
+                    results.append({
+                        "id": i + 1,
+                        "title": item.get("trackName", "Unknown"),
+                        "artist": item.get("artistName", "Unknown"),
+                        "album": item.get("albumName"),
+                        "thumbnail": None,
+                        "confidence": "api"
+                    })
+                return results
+    except Exception as e:
+        logger.warning(f"lrclib.net search failed: {e}")
+    return []
+
+
+def levenshtein_distance(s1: str, s2: str) -> int:
+    """Calculate Levenshtein distance between two strings."""
+    if len(s1) < len(s2):
+        return levenshtein_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    return previous_row[-1]
+
+
+def fuzzy_match(query: str, target: str) -> bool:
+    """
+    Fuzzy matching for song titles - handles typos and variations.
+    """
+    query = query.lower().strip()
+    target = target.lower().strip()
+    
+    # Exact match
+    if query == target or query in target or target in query:
+        return True
+    
+    # Remove spaces and compare
+    query_no_space = query.replace(' ', '')
+    target_no_space = target.replace(' ', '')
+    if query_no_space == target_no_space:
+        return True
+    
+    # Check word overlap (at least 60% of words match)
+    query_words = set(query.split())
+    target_words = set(target.split())
+    if query_words and target_words:
+        overlap = len(query_words & target_words)
+        min_len = min(len(query_words), len(target_words))
+        if min_len > 0 and overlap / min_len >= 0.6:
+            return True
+    
+    # Levenshtein distance on full string - stricter threshold
+    max_distance = max(2, len(min(query_no_space, target_no_space, key=len)) // 5)  # 20% error rate
+    distance = levenshtein_distance(query_no_space, target_no_space)
+    if distance <= max_distance:
+        return True
+    
+    return False
+
+
+async def parse_song_query(query: str) -> list:
+    """
+    Parse a search query and return potential artist/title combinations.
+    Uses local database for quick matches + live API search for millions of songs!
+    """
+    query_lower = query.lower().strip()
+    # Normalize spaces and remove extra whitespace
+    query_normalized = ' '.join(query_lower.split())
+    results = []
+    
+    # Check popular songs database first with fuzzy matching
+    for key, song in POPULAR_SONGS.items():
+        key_normalized = ' '.join(key.split())
+        # Check various matching patterns using fuzzy_match
+        if fuzzy_match(query_normalized, key_normalized):
+            results.append({
+                "id": len(results) + 1,
+                "title": song["title"],
+                "artist": song["artist"],
+                "thumbnail": None,
+                "confidence": "high"
+            })
+        # Also check artist name
+        elif fuzzy_match(query_normalized, song["artist"].lower()):
+            results.append({
+                "id": len(results) + 1,
+                "title": song["title"],
+                "artist": song["artist"],
+                "thumbnail": None,
+                "confidence": "medium"
+            })
+    
+    # Parse "artist - song" format
+    if " - " in query:
+        parts = query.split(" - ", 1)
+        results.append({
+            "id": len(results) + 1,
+            "title": parts[1].strip(),
+            "artist": parts[0].strip(),
+            "thumbnail": None,
+            "confidence": "medium"
+        })
+    
+    # Parse "song by artist" format
+    if " by " in query_lower:
+        parts = query_lower.split(" by ", 1)
+        results.append({
+            "id": len(results) + 1,
+            "title": parts[0].strip().title(),
+            "artist": parts[1].strip().title(),
+            "thumbnail": None,
+            "confidence": "medium"
+        })
+    
+    # *** LIVE API SEARCH - Search millions of songs! ***
+    # If we have fewer than 5 local results, search the API
+    if len(results) < 5:
+        try:
+            api_results = await search_songs_live(query)
+            for api_song in api_results:
+                # Don't add duplicates
+                is_duplicate = any(
+                    r["title"].lower() == api_song["title"].lower() and 
+                    r["artist"].lower() == api_song["artist"].lower()
+                    for r in results
+                )
+                if not is_duplicate:
+                    api_song["id"] = len(results) + 1
+                    results.append(api_song)
+        except Exception as e:
+            logger.warning(f"Live search failed: {e}")
+    
+    # If still no results, just use the query as title
+    if not results:
+        results.append({
+            "id": 1,
+            "title": query.title(),
+            "artist": "Unknown Artist",
+            "thumbnail": None,
+            "confidence": "low"
+        })
+    
+    # Deduplicate by title+artist
+    seen = set()
+    unique_results = []
+    for r in results:
+        key = (r["title"].lower(), r["artist"].lower())
+        if key not in seen:
+            seen.add(key)
+            unique_results.append(r)
+    
+    return unique_results[:10]  # Return up to 10 results now!
+
+
+async def fetch_lyrics_from_api(artist: str, title: str) -> str | None:
+    """
+    Fetch lyrics using multiple free APIs.
+    Uses lrclib.net as primary (faster) and lyrics.ovh as fallback.
+    """
+    # Clean up artist and title
+    artist_clean = re.sub(r'[^\w\s\'-]', '', artist).strip()
+    title_clean = re.sub(r'[^\w\s\'-]', '', title).strip()
+    
+    # Try lrclib.net first (faster and more reliable)
+    try:
+        url = f"https://lrclib.net/api/get?artist_name={urllib.request.quote(artist_clean)}&track_name={urllib.request.quote(title_clean)}"
+        async with httpx.AsyncClient(timeout=8) as client:
+            response = await client.get(url, headers={"User-Agent": "VibeStream/1.0"})
+            if response.status_code == 200:
+                data = response.json()
+                # lrclib returns plainLyrics (without timestamps) or syncedLyrics (with timestamps)
+                lyrics = data.get("plainLyrics") or data.get("syncedLyrics")
+                if lyrics and len(lyrics) > 50:
+                    # Remove timestamp markers if present [00:00.00]
+                    lyrics = re.sub(r'\[\d{2}:\d{2}\.\d{2}\]', '', lyrics)
+                    return lyrics.strip()
+    except Exception as e:
+        logger.warning(f"lrclib.net failed: {e}")
+    
+    # Try lyrics.ovh as fallback
+    try:
+        url = f"https://api.lyrics.ovh/v1/{urllib.request.quote(artist_clean)}/{urllib.request.quote(title_clean)}"
+        async with httpx.AsyncClient(timeout=8) as client:
+            response = await client.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                lyrics = data.get("lyrics")
+                if lyrics and len(lyrics) > 50:
+                    return lyrics.strip()
+    except Exception as e:
+        logger.warning(f"lyrics.ovh failed: {e}")
+    
+    # Try with swapped order (some songs are indexed differently)
+    try:
+        # Sometimes the API has artist/title reversed
+        url = f"https://api.lyrics.ovh/v1/{urllib.request.quote(title_clean)}/{urllib.request.quote(artist_clean)}"
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                lyrics = data.get("lyrics")
+                if lyrics and len(lyrics) > 50:
+                    return lyrics.strip()
+    except Exception as e:
+        pass
+    
+    # Try alternative query formats
+    alt_queries = [
+        (artist_clean.lower(), title_clean.lower()),
+        (artist_clean.split()[0] if artist_clean else "", title_clean),  # First name only
+    ]
+    
+    for alt_artist, alt_title in alt_queries:
+        if not alt_artist or not alt_title:
+            continue
+        try:
+            url = f"https://api.lyrics.ovh/v1/{urllib.request.quote(alt_artist)}/{urllib.request.quote(alt_title)}"
+            async with httpx.AsyncClient(timeout=8) as client:
+                response = await client.get(url)
+                if response.status_code == 200:
+                    data = response.json()
+                    lyrics = data.get("lyrics")
+                    if lyrics and len(lyrics) > 50:
+                        return lyrics.strip()
+        except:
+            pass
+    
+    return None
+
+
+@app.get("/api/lyrics/search")
+async def lyrics_search(q: str = Query(..., description="Search query for songs")):
+    """
+    Search for songs to get lyrics.
+    Returns list of potential song matches.
+    """
+    if not q or len(q.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Query too short")
+    
+    results = await parse_song_query(q.strip())
+    return {"results": results, "query": q}
+
+
+@app.get("/api/lyrics/get")
+async def get_lyrics(
+    artist: str = Query(..., description="Artist name"),
+    title: str = Query(..., description="Song title")
+):
+    """
+    Get lyrics for a specific song.
+    """
+    if not artist or not title:
+        raise HTTPException(status_code=400, detail="Artist and title required")
+    
+    lyrics = await fetch_lyrics_from_api(artist, title)
+    
+    if not lyrics:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Lyrics not found for '{title}' by '{artist}'. Try searching with the format: Artist - Song Title"
+        )
+    
+    return {"lyrics": lyrics, "artist": artist, "title": title}
+
+
 # ---------- Routes ----------
 @app.get("/health")
 def health_check():
@@ -1035,6 +1548,221 @@ def analyze_video(request: Request, body: AnalyzeRequest):
         # Include the actual URL for download (important for search results)
         url=info.get("webpage_url") or info.get("url"),
         uploader=info.get("uploader") or info.get("channel"),
+    )
+
+
+class PreviewResponse(BaseModel):
+    """Response model for audio preview endpoint."""
+    stream_url: str  # Our proxy URL, not direct YouTube URL
+    title: str
+    thumbnail: str | None = None
+    duration: int | None = None
+    source: str  # "yt-dlp", "invidious", "piped"
+
+
+# In-memory cache for audio URLs (expires after 5 minutes)
+audio_url_cache: dict[str, tuple[str, str, float]] = {}  # video_id -> (url, content_type, timestamp)
+CACHE_EXPIRY = 300  # 5 minutes
+
+
+@app.get("/stream/{video_id}")
+async def stream_audio(video_id: str, request: Request):
+    """
+    Proxy endpoint to stream audio - bypasses CORS restrictions.
+    Streams audio directly through our server.
+    """
+    import time
+    
+    audio_url = None
+    content_type = "audio/mp4"  # Default, will be detected
+    
+    # Check cache first
+    cached = audio_url_cache.get(video_id)
+    if cached:
+        audio_url, content_type, cached_time = cached
+        if time.time() - cached_time > CACHE_EXPIRY:
+            # Expired, remove from cache
+            del audio_url_cache[video_id]
+            audio_url = None
+    
+    if not audio_url:
+        # Get fresh audio URL
+        
+        # Try yt-dlp first for best quality
+        try:
+            ydl_opts = build_ydl_opts(for_download=False)
+            ydl_opts["format"] = "bestaudio[ext=m4a]/bestaudio/best"
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+                if info:
+                    formats = info.get("formats", [])
+                    # Prefer m4a format (works best in browsers)
+                    audio_formats = [f for f in formats if f.get("acodec") != "none" and f.get("vcodec") == "none"]
+                    if audio_formats:
+                        # Prefer m4a, then webm
+                        m4a_formats = [f for f in audio_formats if f.get("ext") == "m4a"]
+                        if m4a_formats:
+                            m4a_formats.sort(key=lambda x: x.get("abr") or 0, reverse=True)
+                            audio_url = m4a_formats[0].get("url")
+                            content_type = "audio/mp4"
+                        else:
+                            audio_formats.sort(key=lambda x: x.get("abr") or 0, reverse=True)
+                            best = audio_formats[0]
+                            audio_url = best.get("url")
+                            ext = best.get("ext", "m4a")
+                            content_type = "audio/webm" if ext == "webm" else "audio/mp4"
+        except Exception as e:
+            logger.warning(f"yt-dlp stream failed: {e}")
+        
+        # Try Invidious
+        if not audio_url:
+            result = get_audio_url_from_invidious(video_id)
+            if result:
+                audio_url = result[0]
+                content_type = "audio/mp4"
+        
+        # Try Piped
+        if not audio_url:
+            result = get_audio_url_from_piped(video_id)
+            if result:
+                audio_url = result[0]
+                content_type = "audio/mp4"
+        
+        if not audio_url:
+            raise HTTPException(status_code=404, detail="Audio stream not found")
+        
+        # Cache the URL
+        audio_url_cache[video_id] = (audio_url, content_type, time.time())
+    
+    # Stream the audio through our server with correct content type
+    async def audio_stream():
+        try:
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                async with client.stream("GET", audio_url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                }) as response:
+                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                        yield chunk
+        except Exception as e:
+            logger.error(f"Stream error: {e}")
+    
+    return StreamingResponse(
+        audio_stream(),
+        media_type=content_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Type": content_type,
+            "Cache-Control": "no-cache",
+        }
+    )
+
+
+@app.get("/preview", response_model=PreviewResponse)
+@limiter.limit("30/minute")  # More lenient for previews
+async def get_audio_preview(
+    request: Request,
+    url: str = Query(..., description="Video URL or search query"),
+):
+    """
+    Get a streaming audio URL for preview/playback without downloading.
+    
+    Returns a proxy stream URL that can be played in the browser.
+    Uses multiple fallback sources for reliability.
+    """
+    logger.info("Preview request received")
+    
+    input_text = url.strip()
+    is_search = not is_url(input_text)
+    video_id = extract_video_id(input_text) if not is_search else None
+    
+    # Prepare URL (add ytsearch1: prefix if it's a search query)
+    prepared_url = prepare_url(input_text)
+    
+    audio_url = None
+    title = "Unknown"
+    thumbnail = None
+    duration = None
+    source = "unknown"
+    
+    # Try yt-dlp first to get direct audio URL
+    try:
+        ydl_opts = build_ydl_opts(for_download=False)
+        ydl_opts["format"] = "bestaudio/best"
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(prepared_url, download=False)
+            
+            # For search results, get the first entry
+            if info and "entries" in info:
+                entries = list(info["entries"])
+                info = entries[0] if entries else None
+            
+            if info:
+                title = info.get("title", "Unknown")
+                thumbnail = info.get("thumbnail")
+                duration = info.get("duration")
+                video_id = info.get("id") or extract_video_id(info.get("webpage_url", ""))
+                
+                # Get direct audio URL from formats
+                formats = info.get("formats", [])
+                audio_formats = [f for f in formats if f.get("acodec") != "none" and f.get("vcodec") == "none"]
+                
+                if audio_formats:
+                    # Sort by quality (bitrate)
+                    audio_formats.sort(key=lambda x: x.get("abr") or x.get("tbr") or 0, reverse=True)
+                    audio_url = audio_formats[0].get("url")
+                    source = "yt-dlp"
+                elif formats:
+                    # Fallback to any format with audio
+                    for f in formats:
+                        if f.get("acodec") != "none" and f.get("url"):
+                            audio_url = f.get("url")
+                            source = "yt-dlp"
+                            break
+                            
+    except Exception as e:
+        logger.warning(f"yt-dlp preview failed: {e}")
+    
+    # Fallback to Invidious
+    if not audio_url and video_id:
+        result = get_audio_url_from_invidious(video_id)
+        if result:
+            audio_url, meta = result
+            title = meta.get("title", title) or title
+            thumbnail = meta.get("thumbnail") or thumbnail
+            duration = meta.get("duration") or duration
+            source = "invidious"
+    
+    # Fallback to Piped
+    if not audio_url and video_id:
+        result = get_audio_url_from_piped(video_id)
+        if result:
+            audio_url, meta = result
+            title = meta.get("title", title) or title
+            thumbnail = meta.get("thumbnail") or thumbnail
+            duration = meta.get("duration") or duration
+            source = "piped"
+    
+    if not audio_url or not video_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not get audio stream for preview. Try a different video."
+        )
+    
+    # Cache the audio URL for the stream endpoint (with content type)
+    import time
+    audio_url_cache[video_id] = (audio_url, "audio/mp4", time.time())
+    
+    logger.info(f"Preview URL obtained from {source}")
+    
+    # Return our proxy stream URL instead of direct YouTube URL
+    return PreviewResponse(
+        stream_url=f"/stream/{video_id}",
+        title=title,
+        thumbnail=thumbnail,
+        duration=duration,
+        source=source,
     )
 
 

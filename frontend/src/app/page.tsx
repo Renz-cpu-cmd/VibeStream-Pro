@@ -176,6 +176,14 @@ export default function HomePage() {
   const [showFallback, setShowFallback] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   
+  // Audio Preview State
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioProgress, setAudioProgress] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioRef, setAudioRef] = useState<HTMLAudioElement | null>(null);
+  
   // New: Tab switcher state (audio vs video)
   const [activeTab, setActiveTab] = useState<"audio" | "video">("audio");
   const [videoResolution, setVideoResolution] = useState<"360" | "480" | "720" | "1080" | "best">("720");
@@ -243,6 +251,129 @@ export default function HomePage() {
       setTimeout(() => setCopied(false), 2000);
     }
   };
+
+  // Audio Preview Functions
+  const handlePreview = async () => {
+    const targetUrl = videoInfo?.url || url;
+    if (!targetUrl.trim()) return;
+    
+    setPreviewLoading(true);
+    setError(null);
+    
+    try {
+      const res = await fetch(`${API_BASE}/preview?url=${encodeURIComponent(targetUrl)}`);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to get preview");
+      }
+      const data = await res.json();
+      
+      // Stop existing audio if playing
+      if (audioRef) {
+        audioRef.pause();
+        audioRef.src = "";
+      }
+      
+      // Use the proxy stream URL from our backend (bypasses CORS)
+      const streamUrl = `${API_BASE}${data.stream_url}`;
+      
+      // Create new audio element
+      const audio = new Audio(streamUrl);
+      
+      audio.addEventListener("loadedmetadata", () => {
+        setAudioDuration(audio.duration);
+      });
+      
+      audio.addEventListener("timeupdate", () => {
+        setAudioProgress(audio.currentTime);
+      });
+      
+      audio.addEventListener("ended", () => {
+        setIsPlaying(false);
+        setAudioProgress(0);
+      });
+      
+      audio.addEventListener("error", (e) => {
+        console.error("Audio error:", e);
+        setError("Audio playback failed. Try again.");
+        setIsPlaying(false);
+        setAudioUrl(null);
+      });
+      
+      audio.addEventListener("canplay", () => {
+        // Audio is ready to play
+        setPreviewLoading(false);
+      });
+      
+      setAudioRef(audio);
+      setAudioUrl(streamUrl);
+      
+      // Start playing
+      await audio.play();
+      setIsPlaying(true);
+      
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Preview failed");
+      setPreviewLoading(false);
+    }
+  };
+  
+  const togglePlayPause = () => {
+    if (!audioRef) return;
+    
+    if (isPlaying) {
+      audioRef.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.play();
+      setIsPlaying(true);
+    }
+  };
+  
+  const stopPreview = () => {
+    if (audioRef) {
+      audioRef.pause();
+      audioRef.currentTime = 0;
+    }
+    setIsPlaying(false);
+    setAudioProgress(0);
+  };
+  
+  const seekAudio = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = parseFloat(e.target.value);
+    if (audioRef) {
+      audioRef.currentTime = time;
+      setAudioProgress(time);
+    }
+  };
+  
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+  
+  // Cleanup audio on unmount or when video changes
+  useEffect(() => {
+    return () => {
+      if (audioRef) {
+        audioRef.pause();
+        audioRef.src = "";
+      }
+    };
+  }, [audioRef]);
+  
+  // Reset preview when video info changes
+  useEffect(() => {
+    if (audioRef) {
+      audioRef.pause();
+      audioRef.currentTime = 0;
+    }
+    setIsPlaying(false);
+    setAudioProgress(0);
+    setAudioUrl(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoInfo]);
 
   const handleAnalyze = async () => {
     if (!url.trim()) return;
@@ -588,6 +719,97 @@ export default function HomePage() {
                       <p className="mt-1 text-sm text-gray-400">
                         {videoInfo.uploader}
                       </p>
+                    )}
+
+                    {/* Audio Preview Player - Only show for Audio tab */}
+                    {activeTab === "audio" && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.1 }}
+                        className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4"
+                      >
+                        <div className="flex items-center gap-3">
+                          {/* Play/Pause Button */}
+                          <motion.button
+                            whileHover={{ scale: 1.1 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={audioUrl ? togglePlayPause : handlePreview}
+                            disabled={previewLoading}
+                            className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/30 transition-all hover:shadow-purple-500/50 disabled:opacity-50"
+                          >
+                            {previewLoading ? (
+                              <svg className="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                              </svg>
+                            ) : isPlaying ? (
+                              <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                              </svg>
+                            ) : (
+                              <svg className="h-6 w-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M8 5v14l11-7z" />
+                              </svg>
+                            )}
+                          </motion.button>
+                          
+                          {/* Progress Bar and Time */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-400 w-10 text-right font-mono">
+                                {formatTime(audioProgress)}
+                              </span>
+                              <div className="flex-1 relative">
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={audioDuration || 100}
+                                  value={audioProgress}
+                                  onChange={seekAudio}
+                                  disabled={!audioUrl}
+                                  className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer disabled:cursor-not-allowed
+                                    [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 
+                                    [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-purple-500 
+                                    [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:shadow-purple-500/50
+                                    [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:rounded-full 
+                                    [&::-moz-range-thumb]:bg-purple-500 [&::-moz-range-thumb]:border-0"
+                                  style={{
+                                    background: audioDuration 
+                                      ? `linear-gradient(to right, rgb(168, 85, 247) ${(audioProgress / audioDuration) * 100}%, rgba(255,255,255,0.1) ${(audioProgress / audioDuration) * 100}%)`
+                                      : 'rgba(255,255,255,0.1)'
+                                  }}
+                                />
+                              </div>
+                              <span className="text-xs text-gray-400 w-10 font-mono">
+                                {formatTime(audioDuration || videoInfo.duration || 0)}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-gray-500 text-center">
+                              {audioUrl 
+                                ? (isPlaying ? "🎵 Now Playing" : "⏸️ Paused") 
+                                : "🎧 Click to preview audio"}
+                            </p>
+                          </div>
+                          
+                          {/* Stop Button */}
+                          {audioUrl && (
+                            <motion.button
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              whileHover={{ scale: 1.1 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={stopPreview}
+                              className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-gray-400 hover:bg-white/20 hover:text-white transition-all"
+                              title="Stop"
+                            >
+                              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                                <rect x="6" y="6" width="12" height="12" />
+                              </svg>
+                            </motion.button>
+                          )}
+                        </div>
+                      </motion.div>
                     )}
 
                     {/* Tab Switcher: Audio vs Video */}
@@ -964,15 +1186,6 @@ export default function HomePage() {
             </div>
           </div>
         </motion.div>
-
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.8 }}
-          className="mt-6 text-center text-xs text-gray-600"
-        >
-          Built with Next.js, Tailwind CSS & FastAPI
-        </motion.p>
       </div>
 
       {/* Donation Modal */}

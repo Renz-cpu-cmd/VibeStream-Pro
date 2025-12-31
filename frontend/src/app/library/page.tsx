@@ -219,6 +219,18 @@ export default function LibraryPage() {
                         src={song.thumbnail}
                         alt={song.title}
                         className="h-12 w-12 rounded-lg object-cover"
+                        onError={(e) => {
+                          // Fallback to lower res thumbnail or placeholder
+                          const target = e.target as HTMLImageElement;
+                          if (target.src.includes('maxresdefault')) {
+                            target.src = target.src.replace('maxresdefault', 'hqdefault');
+                          } else if (target.src.includes('hqdefault')) {
+                            target.src = target.src.replace('hqdefault', 'mqdefault');
+                          } else {
+                            target.style.display = 'none';
+                            target.parentElement?.querySelector('.fallback-icon')?.classList.remove('hidden');
+                          }
+                        }}
                       />
                     ) : (
                       <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500/30 to-pink-500/30">

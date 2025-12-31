@@ -168,6 +168,14 @@ export default function TrendingPage() {
                     src={song.thumbnail}
                     alt={song.title}
                     className="h-14 w-14 rounded-xl object-cover shadow-lg"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      if (target.src.includes('maxresdefault')) {
+                        target.src = target.src.replace('maxresdefault', 'hqdefault');
+                      } else if (target.src.includes('hqdefault')) {
+                        target.src = target.src.replace('hqdefault', 'mqdefault');
+                      }
+                    }}
                   />
                 ) : (
                   <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500/30 to-red-500/30 text-2xl">
