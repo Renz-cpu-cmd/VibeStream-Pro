@@ -208,12 +208,21 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "fragment_retries": 3,
         # TLS fingerprint impersonation (Chrome-like)
         "impersonate": "chrome",
+        # User-Agent for better compatibility with TikTok, Instagram, etc.
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        },
         # Multiple client fallback strategy (Dec 2025)
         # mweb (mobile web) often works when others fail
         "extractor_args": {
             "youtube": {
                 "player_client": ["mweb", "tv", "ios", "android"],
-            }
+            },
+            "tiktok": {
+                "api_hostname": "api22-normal-c-useast2a.tiktokv.com",
+            },
         },
     }
 
@@ -235,6 +244,29 @@ def is_url(text: str) -> bool:
     """Check if text looks like a URL (starts with http/https)."""
     text = text.strip().lower()
     return text.startswith('http://') or text.startswith('https://')
+
+
+def detect_platform(url: str) -> str:
+    """Detect which platform the URL is from."""
+    url_lower = url.lower()
+    if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
+        return 'youtube'
+    elif 'tiktok.com' in url_lower:
+        return 'tiktok'
+    elif 'instagram.com' in url_lower:
+        return 'instagram'
+    elif 'facebook.com' in url_lower or 'fb.watch' in url_lower:
+        return 'facebook'
+    elif 'twitter.com' in url_lower or 'x.com' in url_lower:
+        return 'twitter'
+    elif 'soundcloud.com' in url_lower:
+        return 'soundcloud'
+    elif 'spotify.com' in url_lower:
+        return 'spotify'
+    elif 'vimeo.com' in url_lower:
+        return 'vimeo'
+    else:
+        return 'other'
 
 
 def extract_video_id(url_or_id: str) -> str | None:
@@ -977,7 +1009,19 @@ def analyze_video(request: Request, body: AnalyzeRequest):
                     }
 
     if info is None:
-        error_detail = f"Could not analyze. yt-dlp: {yt_dlp_error}" if yt_dlp_error else "No results found"
+        # Detect platform for better error messages
+        platform = detect_platform(input_text) if not is_search else 'search'
+        
+        if platform == 'youtube':
+            error_detail = f"Could not analyze YouTube video. yt-dlp: {yt_dlp_error}" if yt_dlp_error else "No results found"
+        elif platform == 'tiktok':
+            error_detail = f"TikTok extraction failed. TikTok may be blocking requests. Error: {yt_dlp_error or 'Unknown'}"
+        elif platform == 'spotify':
+            error_detail = "Spotify is not supported. Spotify uses DRM protection. Try searching for the song name instead!"
+        elif platform in ['instagram', 'facebook', 'twitter']:
+            error_detail = f"{platform.title()} extraction failed. Some posts may be private or restricted. Error: {yt_dlp_error or 'Unknown'}"
+        else:
+            error_detail = f"Could not analyze. yt-dlp: {yt_dlp_error}" if yt_dlp_error else "No results found"
         raise HTTPException(status_code=400, detail=error_detail)
 
     duration = info.get("duration")
