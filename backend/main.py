@@ -1,9 +1,9 @@
 """
 VibeStream Pro API
-Late-2025 High-Stability Guest Mode:
-- Deno JS runtime for n-sig challenge solving
+Late-2025 High-Stability with Invidious/Piped Fallback:
+- Primary: yt-dlp with TV + iOS clients
+- Fallback: Invidious/Piped APIs (no cookies needed!)
 - curl-cffi for TLS fingerprint impersonation
-- TV + Android clients (most permissive for guest requests)
 - Web Integrity bypass (skip webpage/configs/dash/hls)
 - Rate limiting (5 downloads/hour per IP)
 - Privacy-first logging (no URLs logged)
@@ -31,6 +31,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal, Optional
 import urllib.request
+import json
+import random
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +42,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 import yt_dlp
+
+# For async HTTP requests to Invidious/Piped
+import httpx
 
 # Mutagen for MP3 metadata embedding
 try:
@@ -75,8 +80,23 @@ FFPROBE_EXE = BACKEND_DIR / "ffprobe.exe"
 USE_LOCAL_FFMPEG = FFMPEG_EXE.exists() and FFPROBE_EXE.exists()
 FFMPEG_LOCATION: str | None = str(BACKEND_DIR) if USE_LOCAL_FFMPEG else None
 
+# ---------- Cookie File Setup ----------
+# Supports both file and base64 env var (for Render/Docker deployments)
+import base64
 
+COOKIE_FILE = BACKEND_DIR / "cookies.txt"
 
+# Check for COOKIES_B64 environment variable first (for cloud deployments)
+COOKIES_B64 = os.getenv("COOKIES_B64", "")
+if COOKIES_B64 and not COOKIE_FILE.exists():
+    try:
+        decoded_cookies = base64.b64decode(COOKIES_B64).decode("utf-8")
+        COOKIE_FILE.write_text(decoded_cookies)
+        logger.info("🍪 Cookies created from COOKIES_B64 environment variable")
+    except Exception as e:
+        logger.warning(f"⚠️  Failed to decode COOKIES_B64: {e}")
+
+USE_COOKIES = COOKIE_FILE.exists() and COOKIE_FILE.stat().st_size > 500  # Must have actual content
 
 
 def ffmpeg_available() -> bool:
@@ -103,8 +123,15 @@ def startup_checks():
     else:
         logger.warning("⚠️  No JS runtime (Deno) - n-sig challenges may FAIL!")
 
+    # Cookie file check
+    if USE_COOKIES:
+        logger.info("🍪 Cookie file found - authenticated mode ENABLED")
+    else:
+        logger.info("ℹ️  No cookies.txt - using Invidious/Piped fallback")
+
     # Feature summary
-    logger.info("📺 Pure Guest Mode: TV + iOS clients (Dec 2025 bypass)")
+    logger.info("📺 Primary: yt-dlp with TV/iOS clients")
+    logger.info("🔄 Fallback: Invidious/Piped APIs (no cookies needed)")
     logger.info("✅ Web Integrity bypass: skip webpage/configs/dash/hls")
     logger.info("✅ Rate limiting: 5 downloads/hour per IP")
 
@@ -167,7 +194,7 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
     - Web Integrity bypass (skip webpage/configs/dash/hls)
     - player_params: atfg=1 forces TV-specific parameters
     - curl-cffi for TLS fingerprint impersonation
-    - NO cookies, NO PO tokens - pure guest mode
+    - Cookie authentication if cookies.txt exists
     """
     opts: dict = {
         # Core settings
@@ -175,7 +202,7 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
         "logger": logger,
         "no_color": True,
         "noplaylist": True,
-        # Pure Guest Mode: NO impersonate, use curl_cffi directly
+        # TLS fingerprint impersonation
         "impersonate": None,
         "request_handler": "curl_cffi",
         # TV Client Bypass (December 2025)
@@ -188,6 +215,10 @@ def build_ydl_opts(for_download: bool = False, include_ffmpeg: bool = False) -> 
             }
         },
     }
+
+    # Add cookies if available (bypasses bot detection)
+    if USE_COOKIES:
+        opts["cookiefile"] = str(COOKIE_FILE)
 
     if not for_download:
         opts["skip_download"] = True
@@ -205,6 +236,24 @@ def is_url(text: str) -> bool:
     return text.startswith('http://') or text.startswith('https://')
 
 
+def extract_video_id(url_or_id: str) -> str | None:
+    """Extract YouTube video ID from URL or return ID if already an ID."""
+    text = url_or_id.strip()
+    # Already an ID (11 chars alphanumeric)
+    if re.match(r'^[a-zA-Z0-9_-]{11}$', text):
+        return text
+    # Extract from various YouTube URL formats
+    patterns = [
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
+        r'youtube\.com/shorts/([a-zA-Z0-9_-]{11})',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+    return None
+
+
 def prepare_url(input_text: str) -> str:
     """
     Prepare URL for yt-dlp. If input doesn't start with http,
@@ -216,6 +265,136 @@ def prepare_url(input_text: str) -> str:
     # It's a search query - use ytsearch: prefix
     logger.info(f"🔍 Search query detected, using ytsearch1:")
     return f"ytsearch1:{text}"
+
+
+# ---------- Invidious/Piped Fallback API ----------
+# Public instances (rotated for load balancing)
+INVIDIOUS_INSTANCES = [
+    "https://invidious.fdn.fr",
+    "https://inv.nadeko.net",
+    "https://invidious.nerdvpn.de",
+    "https://inv.tux.pizza",
+    "https://invidious.protokolla.fi",
+]
+
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://api.piped.yt",
+    "https://pipedapi.in.projectsegfau.lt",
+]
+
+
+def get_invidious_video_info(video_id: str) -> dict | None:
+    """Fetch video info from Invidious API (fallback when yt-dlp fails)."""
+    instances = INVIDIOUS_INSTANCES.copy()
+    random.shuffle(instances)
+    
+    for instance in instances[:3]:  # Try up to 3 instances
+        try:
+            url = f"{instance}/api/v1/videos/{video_id}"
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(url)
+                if response.status_code == 200:
+                    data = response.json()
+                    logger.info(f"✅ Invidious fallback successful ({instance})")
+                    return data
+        except Exception as e:
+            logger.warning(f"Invidious instance {instance} failed: {e}")
+            continue
+    return None
+
+
+def get_piped_video_info(video_id: str) -> dict | None:
+    """Fetch video info from Piped API (fallback when yt-dlp fails)."""
+    instances = PIPED_INSTANCES.copy()
+    random.shuffle(instances)
+    
+    for instance in instances[:3]:  # Try up to 3 instances
+        try:
+            url = f"{instance}/streams/{video_id}"
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(url)
+                if response.status_code == 200:
+                    data = response.json()
+                    logger.info(f"✅ Piped fallback successful ({instance})")
+                    return data
+        except Exception as e:
+            logger.warning(f"Piped instance {instance} failed: {e}")
+            continue
+    return None
+
+
+def search_invidious(query: str) -> dict | None:
+    """Search for videos using Invidious API."""
+    instances = INVIDIOUS_INSTANCES.copy()
+    random.shuffle(instances)
+    
+    for instance in instances[:3]:
+        try:
+            url = f"{instance}/api/v1/search"
+            params = {"q": query, "type": "video"}
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(url, params=params)
+                if response.status_code == 200:
+                    results = response.json()
+                    if results and len(results) > 0:
+                        logger.info(f"✅ Invidious search successful ({instance})")
+                        return results[0]  # Return first result
+        except Exception as e:
+            logger.warning(f"Invidious search on {instance} failed: {e}")
+            continue
+    return None
+
+
+def get_audio_url_from_invidious(video_id: str) -> tuple[str, dict] | None:
+    """Get direct audio URL from Invidious."""
+    info = get_invidious_video_info(video_id)
+    if not info:
+        return None
+    
+    # Find best audio format
+    adaptive_formats = info.get("adaptiveFormats", [])
+    audio_formats = [f for f in adaptive_formats if f.get("type", "").startswith("audio/")]
+    
+    if not audio_formats:
+        return None
+    
+    # Sort by bitrate (prefer higher quality)
+    audio_formats.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
+    best_audio = audio_formats[0]
+    
+    return best_audio.get("url"), {
+        "title": info.get("title", "Unknown"),
+        "thumbnail": info.get("videoThumbnails", [{}])[0].get("url") if info.get("videoThumbnails") else None,
+        "duration": info.get("lengthSeconds"),
+        "uploader": info.get("author"),
+        "video_id": video_id,
+    }
+
+
+def get_audio_url_from_piped(video_id: str) -> tuple[str, dict] | None:
+    """Get direct audio URL from Piped."""
+    info = get_piped_video_info(video_id)
+    if not info:
+        return None
+    
+    # Find best audio stream
+    audio_streams = info.get("audioStreams", [])
+    if not audio_streams:
+        return None
+    
+    # Sort by bitrate
+    audio_streams.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
+    best_audio = audio_streams[0]
+    
+    return best_audio.get("url"), {
+        "title": info.get("title", "Unknown"),
+        "thumbnail": info.get("thumbnailUrl"),
+        "duration": info.get("duration"),
+        "uploader": info.get("uploader"),
+        "video_id": video_id,
+    }
 
 
 # ---------- Audio Processing Functions ----------
@@ -432,16 +611,22 @@ def analyze_video(request: Request, body: AnalyzeRequest):
     """
     Extract metadata (title, thumbnail, duration) for a given video URL or search query.
     If input is not a URL, searches YouTube using ytsearch1:.
-    Pure Guest Mode - no cookies, no tokens.
+    Uses Invidious/Piped as fallback when yt-dlp fails.
     """
     logger.info("Analyze request received")  # No URL logged for privacy
 
+    input_text = body.url.strip()
+    is_search = not is_url(input_text)
+    video_id = extract_video_id(input_text) if not is_search else None
+
     # Prepare URL (add ytsearch1: prefix if it's a search query)
-    prepared_url = prepare_url(body.url)
+    prepared_url = prepare_url(input_text)
 
     ydl_opts = build_ydl_opts(for_download=False)
     info = None
+    yt_dlp_error = None
 
+    # Try yt-dlp first
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(prepared_url, download=False)
@@ -451,11 +636,50 @@ def analyze_video(request: Request, body: AnalyzeRequest):
                 entries = list(info["entries"])
                 info = entries[0] if entries else None
     except Exception as e:
-        logger.error(f"Analyze failed: {e}")
-        raise HTTPException(status_code=400, detail=f"Could not analyze: {e}")
+        yt_dlp_error = str(e)
+        logger.warning(f"yt-dlp failed, trying fallback: {e}")
+
+    # Fallback to Invidious/Piped if yt-dlp failed
+    if info is None:
+        logger.info("🔄 Attempting Invidious/Piped fallback...")
+        
+        if is_search:
+            # Search using Invidious
+            search_result = search_invidious(input_text)
+            if search_result:
+                video_id = search_result.get("videoId")
+                info = {
+                    "title": search_result.get("title", "Unknown"),
+                    "thumbnail": search_result.get("videoThumbnails", [{}])[0].get("url") if search_result.get("videoThumbnails") else None,
+                    "duration": search_result.get("lengthSeconds"),
+                    "uploader": search_result.get("author"),
+                    "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                }
+        elif video_id:
+            # Direct video - try Invidious then Piped
+            inv_info = get_invidious_video_info(video_id)
+            if inv_info:
+                info = {
+                    "title": inv_info.get("title", "Unknown"),
+                    "thumbnail": inv_info.get("videoThumbnails", [{}])[0].get("url") if inv_info.get("videoThumbnails") else None,
+                    "duration": inv_info.get("lengthSeconds"),
+                    "uploader": inv_info.get("author"),
+                    "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                }
+            else:
+                piped_info = get_piped_video_info(video_id)
+                if piped_info:
+                    info = {
+                        "title": piped_info.get("title", "Unknown"),
+                        "thumbnail": piped_info.get("thumbnailUrl"),
+                        "duration": piped_info.get("duration"),
+                        "uploader": piped_info.get("uploader"),
+                        "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                    }
 
     if info is None:
-        raise HTTPException(status_code=400, detail="No results found")
+        error_detail = f"Could not analyze. yt-dlp: {yt_dlp_error}" if yt_dlp_error else "No results found"
+        raise HTTPException(status_code=400, detail=error_detail)
 
     duration = info.get("duration")
     logger.info("Analyze successful")
@@ -494,7 +718,7 @@ def download_audio(
     - Metadata embedding: Cover art, title, artist automatically added
     
     Rate limited to 5 downloads per hour per IP.
-    Pure Guest Mode - no cookies, no tokens.
+    Uses Invidious/Piped as fallback when yt-dlp fails.
     """
     logger.info(f"Download request received (mode: {mode}, trim: {start_time}-{end_time})")
 
@@ -504,12 +728,18 @@ def download_audio(
             detail="ffmpeg not found. Server configuration error.",
         )
 
+    input_text = url.strip()
+    is_search = not is_url(input_text)
+    video_id = extract_video_id(input_text) if not is_search else None
+    
     # Prepare URL (add ytsearch1: prefix if it's a search query)
-    prepared_url = prepare_url(url)
+    prepared_url = prepare_url(input_text)
 
     # First, get video info
     ydl_opts = build_ydl_opts(for_download=False, include_ffmpeg=True)
     info = None
+    use_fallback = False
+    fallback_audio_url = None
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -520,8 +750,42 @@ def download_audio(
                 entries = list(info["entries"])
                 info = entries[0] if entries else None
     except Exception as e:
-        logger.error(f"Download info fetch failed: {e}")
-        raise HTTPException(status_code=400, detail=f"Could not fetch: {e}")
+        logger.warning(f"yt-dlp info fetch failed, trying fallback: {e}")
+        use_fallback = True
+
+    # Fallback for info extraction
+    if info is None or use_fallback:
+        logger.info("🔄 Attempting Invidious/Piped fallback for download...")
+        
+        if is_search:
+            search_result = search_invidious(input_text)
+            if search_result:
+                video_id = search_result.get("videoId")
+        
+        if video_id:
+            # Try to get audio URL from Invidious
+            inv_result = get_audio_url_from_invidious(video_id)
+            if inv_result:
+                fallback_audio_url, inv_meta = inv_result
+                info = {
+                    "title": inv_meta.get("title", "audio"),
+                    "uploader": inv_meta.get("uploader", ""),
+                    "thumbnail": inv_meta.get("thumbnail"),
+                    "duration": inv_meta.get("duration"),
+                    "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                }
+            else:
+                # Try Piped
+                piped_result = get_audio_url_from_piped(video_id)
+                if piped_result:
+                    fallback_audio_url, piped_meta = piped_result
+                    info = {
+                        "title": piped_meta.get("title", "audio"),
+                        "uploader": piped_meta.get("uploader", ""),
+                        "thumbnail": piped_meta.get("thumbnail"),
+                        "duration": piped_meta.get("duration"),
+                        "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                    }
 
     if info is None:
         raise HTTPException(status_code=400, detail="No results found")
@@ -543,27 +807,78 @@ def download_audio(
     # Download to temp file
     tmp_dir = tempfile.mkdtemp()
     tmp_path = Path(tmp_dir)
+    
+    download_success = False
 
-    ydl_download_opts = build_ydl_opts(for_download=True, include_ffmpeg=True)
-    ydl_download_opts.update({
-        "format": "bestaudio/best",
-        "outtmpl": str(tmp_path / "%(title)s.%(ext)s"),
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }
-        ],
-    })
+    # Try yt-dlp download first (if it wasn't already failing)
+    if not use_fallback and fallback_audio_url is None:
+        ydl_download_opts = build_ydl_opts(for_download=True, include_ffmpeg=True)
+        ydl_download_opts.update({
+            "format": "bestaudio/best",
+            "outtmpl": str(tmp_path / "%(title)s.%(ext)s"),
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }
+            ],
+        })
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_download_opts) as ydl:
-            ydl.download([actual_url])
-    except Exception as e:
+        try:
+            with yt_dlp.YoutubeDL(ydl_download_opts) as ydl:
+                ydl.download([actual_url])
+            download_success = True
+        except Exception as e:
+            logger.warning(f"yt-dlp download failed, trying fallback: {e}")
+            # Extract video_id for fallback
+            if not video_id:
+                video_id = extract_video_id(actual_url)
+
+    # Fallback: Download from Invidious/Piped direct URL
+    if not download_success:
+        logger.info("🔄 Using Invidious/Piped fallback for audio download...")
+        
+        if not fallback_audio_url and video_id:
+            inv_result = get_audio_url_from_invidious(video_id)
+            if inv_result:
+                fallback_audio_url = inv_result[0]
+            else:
+                piped_result = get_audio_url_from_piped(video_id)
+                if piped_result:
+                    fallback_audio_url = piped_result[0]
+        
+        if fallback_audio_url:
+            try:
+                # Download audio from direct URL
+                audio_file_path = tmp_path / f"{title}.webm"
+                mp3_file_path = tmp_path / f"{title}.mp3"
+                
+                logger.info("📥 Downloading audio from fallback source...")
+                with httpx.Client(timeout=120.0, follow_redirects=True) as client:
+                    with client.stream("GET", fallback_audio_url) as response:
+                        response.raise_for_status()
+                        with open(audio_file_path, "wb") as f:
+                            for chunk in response.iter_bytes(chunk_size=8192):
+                                f.write(chunk)
+                
+                # Convert to MP3 using FFmpeg
+                logger.info("🔄 Converting to MP3...")
+                ffmpeg_cmd = ["ffmpeg", "-y", "-i", str(audio_file_path), 
+                             "-c:a", "libmp3lame", "-q:a", "2", str(mp3_file_path)]
+                result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=120)
+                
+                if result.returncode == 0:
+                    download_success = True
+                    logger.info("✅ Fallback download and conversion successful")
+                else:
+                    logger.error(f"FFmpeg conversion failed: {result.stderr}")
+            except Exception as e:
+                logger.error(f"Fallback download failed: {e}")
+
+    if not download_success:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        logger.error(f"Download/conversion failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Download/conversion failed: {e}")
+        raise HTTPException(status_code=500, detail="Download failed from all sources")
 
     mp3_files = list(tmp_path.glob("*.mp3"))
     if not mp3_files:
