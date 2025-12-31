@@ -8,12 +8,6 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-// Debug logging (check browser console)
-if (typeof window !== "undefined") {
-  console.log("Supabase URL configured:", !!supabaseUrl);
-  console.log("Supabase Key configured:", !!supabaseAnonKey);
-}
-
 export const supabase = supabaseUrl && supabaseAnonKey 
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
