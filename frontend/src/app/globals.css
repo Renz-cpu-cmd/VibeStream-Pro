@@ -2,6 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ===== ANIMATED MESH GRADIENT BACKGROUND ===== */
+@keyframes gradientShift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  33% {
+    transform: translateY(-20px) rotate(2deg);
+  }
+  66% {
+    transform: translateY(10px) rotate(-1deg);
+  }
+}
+
+@keyframes floatReverse {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  33% {
+    transform: translateY(15px) rotate(-2deg);
+  }
+  66% {
+    transform: translateY(-25px) rotate(1deg);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
 /* Modal pop-in animation */
 @keyframes popIn {
   0% {
@@ -12,4 +57,135 @@
     opacity: 1;
     transform: scale(1) translateY(0);
   }
+}
+
+/* Equalizer bars animation */
+@keyframes equalizerBar1 {
+  0%, 100% { height: 10%; }
+  50% { height: 100%; }
+}
+@keyframes equalizerBar2 {
+  0%, 100% { height: 30%; }
+  50% { height: 80%; }
+}
+@keyframes equalizerBar3 {
+  0%, 100% { height: 60%; }
+  50% { height: 20%; }
+}
+@keyframes equalizerBar4 {
+  0%, 100% { height: 40%; }
+  50% { height: 90%; }
+}
+@keyframes equalizerBar5 {
+  0%, 100% { height: 20%; }
+  50% { height: 70%; }
+}
+
+/* Maintenance pulse */
+@keyframes maintenance-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 15px rgba(251, 191, 36, 0);
+  }
+}
+
+/* Search glow effect */
+@keyframes searchGlow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.3), 0 0 40px rgba(168, 85, 247, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(168, 85, 247, 0.5), 0 0 60px rgba(168, 85, 247, 0.2);
+  }
+}
+
+/* Utility classes */
+.animate-gradient {
+  background-size: 400% 400%;
+  animation: gradientShift 15s ease infinite;
+}
+
+.animate-float {
+  animation: float 8s ease-in-out infinite;
+}
+
+.animate-float-reverse {
+  animation: floatReverse 10s ease-in-out infinite;
+}
+
+.animate-float-slow {
+  animation: float 12s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+.animate-maintenance-pulse {
+  animation: maintenance-pulse 2s ease-in-out infinite;
+}
+
+.animate-search-glow {
+  animation: searchGlow 2s ease-in-out infinite;
+}
+
+/* Equalizer animation classes */
+.equalizer-bar-1 { animation: equalizerBar1 0.8s ease-in-out infinite; }
+.equalizer-bar-2 { animation: equalizerBar2 0.6s ease-in-out infinite 0.1s; }
+.equalizer-bar-3 { animation: equalizerBar3 0.7s ease-in-out infinite 0.2s; }
+.equalizer-bar-4 { animation: equalizerBar4 0.5s ease-in-out infinite 0.15s; }
+.equalizer-bar-5 { animation: equalizerBar5 0.9s ease-in-out infinite 0.25s; }
+
+/* Glassmorphism utilities */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glass-strong {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.glass-card {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Custom focus ring */
+.focus-glow:focus {
+  outline: none;
+  box-shadow: 
+    0 0 0 2px rgba(168, 85, 247, 0.3),
+    0 0 20px rgba(168, 85, 247, 0.4),
+    0 0 40px rgba(168, 85, 247, 0.2);
+}
+
+/* Smooth transitions for all interactive elements */
+* {
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }

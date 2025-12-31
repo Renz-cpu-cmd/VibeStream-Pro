@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -9,18 +10,153 @@ interface VideoInfo {
   thumbnail: string | null;
   duration: number | null;
   duration_str: string;
-  url: string | null;  // Actual video URL (for search results)
-  uploader: string | null;  // Artist/channel name
+  url: string | null;
+  uploader: string | null;
 }
 
 type HistoryItem = {
   url: string;
   title: string;
-  at: number; // epoch ms
+  at: number;
 };
 
 const HISTORY_KEY = "vibestream_history_v1";
 const HISTORY_LIMIT = 5;
+
+// Animation variants
+const fadeInUp = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0 },
+};
+
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+      delayChildren: 0.2,
+    },
+  },
+};
+
+const scaleIn = {
+  hidden: { opacity: 0, scale: 0.9 },
+  visible: { opacity: 1, scale: 1 },
+};
+
+const slideInFromLeft = {
+  hidden: { opacity: 0, x: -30 },
+  visible: { opacity: 1, x: 0 },
+};
+
+// Equalizer Loading Component
+const EqualizerLoader = () => (
+  <div className="flex items-end justify-center gap-1 h-12">
+    {[1, 2, 3, 4, 5].map((i) => (
+      <motion.div
+        key={i}
+        className={`w-2 bg-gradient-to-t from-purple-500 to-pink-500 rounded-full equalizer-bar-${i}`}
+        style={{ minHeight: "4px" }}
+      />
+    ))}
+  </div>
+);
+
+// Maintenance Mode Card Component
+const MaintenanceCard = () => (
+  <motion.div
+    initial={{ opacity: 0, scale: 0.95 }}
+    animate={{ opacity: 1, scale: 1 }}
+    className="relative overflow-hidden rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-950/40 to-orange-950/40 p-6 backdrop-blur-xl animate-maintenance-pulse"
+  >
+    {/* Animated background glow */}
+    <div className="absolute inset-0 bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-amber-500/10 animate-gradient" />
+    
+    <div className="relative flex items-center gap-4">
+      <div className="flex-shrink-0">
+        <motion.div
+          animate={{ rotate: [0, 10, -10, 0] }}
+          transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+          className="text-4xl"
+        >
+          🔧
+        </motion.div>
+      </div>
+      <div>
+        <h3 className="text-lg font-bold text-amber-200">
+          YouTube Engine: Under Maintenance
+        </h3>
+        <p className="mt-1 text-sm text-amber-100/70">
+          YouTube is blocking all third-party services globally. We&apos;re monitoring for solutions.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <a
+            href="https://github.com/yt-dlp/yt-dlp"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-200 transition hover:bg-amber-500/30"
+          >
+            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+            </svg>
+            Use yt-dlp locally
+          </a>
+          <a
+            href="https://github.com/yt-dlp/yt-dlp/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-gray-300 transition hover:bg-white/20"
+          >
+            📢 Follow updates
+          </a>
+        </div>
+      </div>
+    </div>
+  </motion.div>
+);
+
+// Music History Card Component
+const HistoryCard = ({ item, onClick }: { item: HistoryItem; onClick: () => void }) => (
+  <motion.button
+    variants={slideInFromLeft}
+    whileHover={{ scale: 1.02, y: -4 }}
+    whileTap={{ scale: 0.98 }}
+    onClick={onClick}
+    className="group relative w-full overflow-hidden rounded-xl border border-white/10 bg-gradient-to-r from-white/5 to-white/[0.02] p-4 text-left backdrop-blur-md transition-all duration-300 hover:border-purple-500/30 hover:shadow-lg hover:shadow-purple-500/10"
+    title={item.url}
+  >
+    {/* Hover glow effect */}
+    <div className="absolute inset-0 bg-gradient-to-r from-purple-500/0 via-purple-500/5 to-pink-500/0 opacity-0 transition-opacity group-hover:opacity-100" />
+    
+    <div className="relative flex items-center gap-4">
+      {/* Music icon */}
+      <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 text-purple-400">
+        <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+        </svg>
+      </div>
+      
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-semibold text-white group-hover:text-purple-200 transition-colors">
+          {item.title}
+        </div>
+        <div className="mt-0.5 truncate text-xs text-gray-500">{item.url}</div>
+      </div>
+      
+      <div className="flex-shrink-0 text-xs text-gray-600">
+        {new Date(item.at).toLocaleDateString()}
+      </div>
+      
+      {/* Play icon on hover */}
+      <div className="absolute right-4 flex h-8 w-8 items-center justify-center rounded-full bg-purple-500 text-white opacity-0 transition-all group-hover:opacity-100">
+        <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+      </div>
+    </div>
+  </motion.button>
+);
 
 export default function HomePage() {
   const [url, setUrl] = useState("");
@@ -33,14 +169,12 @@ export default function HomePage() {
   const [showDonationModal, setShowDonationModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [audioMode, setAudioMode] = useState<"standard" | "minus_one" | "bass_boost" | "nightcore">("standard");
-  // Trimming state
   const [enableTrim, setEnableTrim] = useState(false);
   const [startTime, setStartTime] = useState<number>(0);
   const [endTime, setEndTime] = useState<number>(0);
-  // Fallback download state
   const [showFallback, setShowFallback] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
 
-  // GCash/Maya number - update with your actual number
   const PAYMENT_NUMBER = "09543718983";
 
   const canUseLocalStorage = useMemo(() => {
@@ -93,7 +227,6 @@ export default function HomePage() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for older browsers
       const textArea = document.createElement("textarea");
       textArea.value = PAYMENT_NUMBER.replace(/-/g, "");
       document.body.appendChild(textArea);
@@ -111,7 +244,6 @@ export default function HomePage() {
     setError(null);
     setVideoInfo(null);
     setShowFallback(false);
-    // Reset trim settings when analyzing new video
     setEnableTrim(false);
     setStartTime(0);
     setEndTime(0);
@@ -128,7 +260,6 @@ export default function HomePage() {
       }
       const data: VideoInfo = await res.json();
       setVideoInfo(data);
-      // Set default end time to video duration
       if (data.duration) {
         setEndTime(data.duration);
       }
@@ -144,7 +275,6 @@ export default function HomePage() {
     setDownloading(true);
     setError(null);
 
-    // Dynamic status messages based on audio mode
     const modeMessages: Record<string, string> = {
       standard: enableTrim ? "✂️ Trimming & converting..." : "Converting to MP3...",
       minus_one: "🎤 AI is removing vocals... This may take 1-2 minutes.",
@@ -154,10 +284,7 @@ export default function HomePage() {
     setDownloadStatus(modeMessages[audioMode] || "Processing...");
 
     try {
-      // Use actual video URL from search results, or original input
       const downloadUrl = videoInfo?.url || url;
-      
-      // Build query params
       let queryParams = `url=${encodeURIComponent(downloadUrl)}&mode=${audioMode}`;
       if (enableTrim && startTime < endTime) {
         queryParams += `&start_time=${startTime}&end_time=${endTime}`;
@@ -171,7 +298,6 @@ export default function HomePage() {
           const data = await res.json();
           errorMessage = data.detail || errorMessage;
         } catch {
-          // Response might not be JSON
           errorMessage = `Server error (${res.status}): ${res.statusText}`;
         }
         throw new Error(errorMessage);
@@ -180,15 +306,13 @@ export default function HomePage() {
       setDownloadStatus("Download complete! Saving file...");
 
       const blob = await res.blob();
-      const filename =
-        videoInfo?.title?.replace(/[\\/*?:"<>|]/g, "") || "audio";
+      const filename = videoInfo?.title?.replace(/[\\/*?:"<>|]/g, "") || "audio";
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
       link.download = `${filename}.mp3`;
       link.click();
       URL.revokeObjectURL(link.href);
 
-      // History: store last 5 successful conversions
       addToHistory({
         url: url.trim(),
         title: videoInfo?.title || filename,
@@ -196,7 +320,6 @@ export default function HomePage() {
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : "Download failed";
       setError(errorMsg);
-      // Show fallback option for server-side download failures
       if (errorMsg.includes("Download failed") || errorMsg.includes("500") || errorMsg.includes("blocking") || errorMsg.includes("bot")) {
         setShowFallback(true);
       }
@@ -207,453 +330,518 @@ export default function HomePage() {
   };
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 px-6 py-12">
-      {/* Decorative glow blobs */}
-      <div className="pointer-events-none absolute -top-24 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full bg-purple-500/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-24 left-10 h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl" />
-      <div className="pointer-events-none absolute top-40 right-10 h-72 w-72 rounded-full bg-pink-500/10 blur-3xl" />
+    <main className="relative min-h-screen overflow-hidden bg-dark-900">
+      {/* Animated Mesh Gradient Background */}
+      <div className="fixed inset-0 -z-10">
+        {/* Base gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-dark-900 via-dark-800 to-dark-900" />
+        
+        {/* Animated gradient orbs */}
+        <div className="absolute top-0 left-1/4 h-[600px] w-[600px] rounded-full bg-purple-600/20 blur-[120px] animate-float" />
+        <div className="absolute bottom-0 right-1/4 h-[500px] w-[500px] rounded-full bg-pink-600/15 blur-[100px] animate-float-reverse" />
+        <div className="absolute top-1/2 left-1/2 h-[400px] w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-600/10 blur-[80px] animate-float-slow" />
+        <div className="absolute bottom-1/4 left-1/3 h-[300px] w-[300px] rounded-full bg-emerald-600/10 blur-[60px] animate-pulse-glow" />
+        
+        {/* Mesh overlay */}
+        <div 
+          className="absolute inset-0 opacity-30"
+          style={{
+            backgroundImage: `radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0)`,
+            backgroundSize: "40px 40px",
+          }}
+        />
+      </div>
 
-      <div className="mx-auto flex w-full max-w-2xl flex-col items-center">
-        {/* Glassmorphism Card */}
-        <div className="w-full rounded-2xl border border-white/10 bg-white/5 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="p-6 sm:p-8">
-            {/* Header */}
-            <div className="text-center">
-              <h1 className="text-4xl font-extrabold tracking-tight text-transparent drop-shadow-sm bg-clip-text bg-gradient-to-r from-purple-300 via-pink-400 to-purple-300 sm:text-5xl">
-                VibeStream Pro
-              </h1>
-              <p className="mt-2 text-sm text-gray-300/80 sm:text-base">
-                Paste a link or search by song name, then download a clean MP3.
-              </p>
-            </div>
+      {/* Main Content */}
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-3xl flex-col items-center px-6 py-12">
+        {/* Hero Section */}
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={staggerContainer}
+          className="w-full text-center"
+        >
+          {/* Logo/Title */}
+          <motion.div variants={fadeInUp} className="mb-2">
+            <span className="inline-flex items-center gap-2 rounded-full border border-purple-500/30 bg-purple-500/10 px-4 py-1.5 text-xs font-medium text-purple-300 backdrop-blur-sm">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-purple-400 opacity-75"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-purple-500"></span>
+              </span>
+              Music Hub • Beta
+            </span>
+          </motion.div>
 
-            {/* Input Area */}
-            <div className="mt-8 flex w-full flex-col gap-3 sm:flex-row">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder="Paste URL or search (e.g. 'Bohemian Rhapsody')..."
-                  className="w-full rounded-xl border border-white/10 bg-gray-950/40 px-4 py-3 text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500/60"
-                />
-                <div className="pointer-events-none absolute inset-0 rounded-xl ring-1 ring-white/5" />
-              </div>
-              <button
-                onClick={handleAnalyze}
-                disabled={loading || !url.trim()}
-                className="rounded-xl bg-purple-600 px-6 py-3 font-semibold text-white shadow-lg shadow-purple-500/20 transition hover:bg-purple-700 hover:shadow-purple-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading ? "Searching..." : "Search"}
-              </button>
-            </div>
+          <motion.h1
+            variants={fadeInUp}
+            className="mt-6 bg-gradient-to-r from-white via-purple-200 to-pink-200 bg-clip-text text-5xl font-black tracking-tight text-transparent sm:text-6xl lg:text-7xl"
+          >
+            VibeStream
+            <span className="bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text"> Pro</span>
+          </motion.h1>
 
-            {/* Error Message */}
-            {error && (
-              <div className="mt-5 rounded-xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-center text-sm text-red-200">
-                {error}
-              </div>
-            )}
+          <motion.p
+            variants={fadeInUp}
+            className="mx-auto mt-4 max-w-md text-gray-400"
+          >
+            Premium audio conversion platform. Search, convert, and download your favorite music.
+          </motion.p>
+        </motion.div>
 
-            {/* Loading Spinner */}
-            {loading && (
-              <div className="mt-6 flex items-center justify-center gap-3 text-gray-300/80">
-                <svg
-                  className="h-5 w-5 animate-spin text-purple-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                  />
-                </svg>
-                <span>Fetching video info...</span>
-              </div>
-            )}
-
-            {/* Video Card */}
-            {videoInfo && !loading && (
-              <div className="mt-7 overflow-hidden rounded-2xl border border-white/10 bg-gray-950/30">
-                {videoInfo.thumbnail && (
-                  <div className="relative">
-                    <img
-                      src={videoInfo.thumbnail}
-                      alt={videoInfo.title}
-                      className="h-56 w-full object-cover"
+        {/* Main Glass Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.3 }}
+          className="mt-10 w-full"
+        >
+          <div className="glass-card rounded-3xl p-6 sm:p-8">
+            {/* Search Bar with Glow Effect */}
+            <motion.div
+              variants={fadeInUp}
+              initial="hidden"
+              animate="visible"
+              className="relative"
+            >
+              <div className={`relative transition-all duration-500 ${isSearchFocused ? 'animate-search-glow rounded-2xl' : ''}`}>
+                <div className="flex w-full flex-col gap-3 sm:flex-row">
+                  <div className="relative flex-1">
+                    <div className="pointer-events-none absolute inset-y-0 left-4 flex items-center">
+                      <svg className={`h-5 w-5 transition-colors ${isSearchFocused ? 'text-purple-400' : 'text-gray-500'}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                    <input
+                      type="text"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      onFocus={() => setIsSearchFocused(true)}
+                      onBlur={() => setIsSearchFocused(false)}
+                      onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
+                      placeholder="Search for any song or paste a URL..."
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 py-4 pl-12 pr-4 text-white placeholder:text-gray-500 backdrop-blur-sm transition-all focus:border-purple-500/50 focus:bg-white/10 focus:outline-none"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-gray-950/80 via-gray-950/20 to-transparent" />
                   </div>
-                )}
-                <div className="p-5 sm:p-6">
-                  <h2 className="text-base font-bold text-white sm:text-lg line-clamp-2">
-                    {videoInfo.title}
-                  </h2>
-                  <p className="mt-1 text-sm text-gray-300/80">
-                    Duration: {videoInfo.duration_str}
-                    {videoInfo.uploader && (
-                      <span className="ml-2 text-gray-400">• {videoInfo.uploader}</span>
-                    )}
-                  </p>
-
-                  {/* Processing Options */}
-                  <div className="mt-4">
-                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-400">
-                      🎛️ Processing Mode
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { value: "standard", label: "Standard MP3", icon: "🎵", desc: "Original audio" },
-                        { value: "minus_one", label: "Minus One", icon: "🎤", desc: "AI vocal removal" },
-                        { value: "bass_boost", label: "Bass Boosted", icon: "🔊", desc: "+10dB bass" },
-                        { value: "nightcore", label: "Nightcore", icon: "⚡", desc: "1.25x + pitch up" },
-                      ].map((mode) => (
-                        <button
-                          key={mode.value}
-                          type="button"
-                          onClick={() => setAudioMode(mode.value as typeof audioMode)}
-                          disabled={downloading}
-                          className={`flex flex-col items-center rounded-xl border p-3 text-center transition ${
-                            audioMode === mode.value
-                              ? "border-purple-500 bg-purple-500/20 text-white"
-                              : "border-white/10 bg-gray-950/30 text-gray-300 hover:border-white/20 hover:bg-gray-950/50"
-                          } disabled:cursor-not-allowed disabled:opacity-50`}
-                        >
-                          <span className="text-lg">{mode.icon}</span>
-                          <span className="mt-1 text-xs font-semibold">{mode.label}</span>
-                          <span className="text-[10px] text-gray-400">{mode.desc}</span>
-                        </button>
-                      ))}
-                    </div>
-                    {audioMode === "minus_one" && (
-                      <p className="mt-2 text-xs text-amber-300/80">
-                        ⚠️ AI vocal removal takes 1-2 minutes on free tier
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Audio Trimming */}
-                  <div className="mt-4">
-                    <label className="flex cursor-pointer items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={enableTrim}
-                        onChange={(e) => setEnableTrim(e.target.checked)}
-                        disabled={downloading}
-                        className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500"
-                      />
-                      <span className="text-xs font-medium uppercase tracking-wider text-gray-400">
-                        ✂️ Trim Audio
-                      </span>
-                    </label>
-                    
-                    {enableTrim && (
-                      <div className="mt-3 flex gap-3">
-                        <div className="flex-1">
-                          <label className="block text-xs text-gray-400 mb-1">Start (sec)</label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={videoInfo.duration || 9999}
-                            value={startTime}
-                            onChange={(e) => setStartTime(Math.max(0, Number(e.target.value)))}
-                            disabled={downloading}
-                            className="w-full rounded-lg border border-white/10 bg-gray-950/40 px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:border-purple-500 focus:outline-none disabled:opacity-50"
-                          />
-                        </div>
-                        <div className="flex-1">
-                          <label className="block text-xs text-gray-400 mb-1">End (sec)</label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={videoInfo.duration || 9999}
-                            value={endTime}
-                            onChange={(e) => setEndTime(Math.min(videoInfo.duration || 9999, Number(e.target.value)))}
-                            disabled={downloading}
-                            className="w-full rounded-lg border border-white/10 bg-gray-950/40 px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:border-purple-500 focus:outline-none disabled:opacity-50"
-                          />
-                        </div>
-                      </div>
-                    )}
-                    {enableTrim && startTime >= endTime && (
-                      <p className="mt-2 text-xs text-red-400">
-                        ⚠️ Start time must be less than end time
-                      </p>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={handleDownload}
-                    disabled={downloading || (enableTrim && startTime >= endTime)}
-                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 py-3 font-semibold text-white ring-1 ring-emerald-300/30 shadow-lg shadow-emerald-500/20 transition hover:shadow-emerald-400/30 hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleAnalyze}
+                    disabled={loading || !url.trim()}
+                    className="group relative overflow-hidden rounded-2xl bg-gradient-to-r from-purple-600 to-pink-600 px-8 py-4 font-semibold text-white shadow-lg shadow-purple-500/25 transition-all hover:shadow-purple-500/40 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {downloading ? (
-                      <>
-                        <svg
-                          className="h-5 w-5 animate-spin"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                          />
-                        </svg>
-                        Converting to MP3...
-                      </>
-                    ) : (
-                      <>
-                        <svg
-                          className="h-5 w-5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
-                          />
-                        </svg>
-                        Download MP3
-                      </>
-                    )}
-                  </button>
-
-                  {/* Download Status Message */}
-                  {downloading && downloadStatus && (
-                    <div className="mt-3 flex items-center justify-center gap-2 text-sm text-emerald-200">
-                      <div className="flex space-x-1">
-                        <div
-                          className="h-2 w-2 animate-bounce rounded-full bg-emerald-300"
-                          style={{ animationDelay: "0ms" }}
-                        />
-                        <div
-                          className="h-2 w-2 animate-bounce rounded-full bg-emerald-300"
-                          style={{ animationDelay: "150ms" }}
-                        />
-                        <div
-                          className="h-2 w-2 animate-bounce rounded-full bg-emerald-300"
-                          style={{ animationDelay: "300ms" }}
-                        />
-                      </div>
-                      <span>{downloadStatus}</span>
-                    </div>
-                  )}
-
-                  {/* Fallback Notice - shown when server download fails */}
-                  {showFallback && !downloading && (
-                    <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/30 p-4">
-                      <div className="flex items-start gap-3">
-                        <div className="text-2xl">🚧</div>
-                        <div>
-                          <h4 className="font-semibold text-amber-200 mb-1">
-                            YouTube Downloads Temporarily Unavailable
-                          </h4>
-                          <p className="text-sm text-gray-300 mb-3">
-                            YouTube is currently blocking all third-party download services (including Cobalt, Invidious, and others). 
-                            We&apos;re actively monitoring for solutions.
-                          </p>
-                          <div className="text-xs text-gray-400 space-y-1">
-                            <p>💡 <strong>Workaround:</strong> Use <a href="https://github.com/yt-dlp/yt-dlp" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">yt-dlp</a> on your local computer - it still works with residential IPs!</p>
-                            <p>📢 Follow <a href="https://github.com/yt-dlp/yt-dlp/issues" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">yt-dlp updates</a> for the latest workarounds.</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                    <span className="relative z-10">
+                      {loading ? "Searching..." : "Search"}
+                    </span>
+                    <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 transition-opacity group-hover:opacity-100" />
+                  </motion.button>
                 </div>
               </div>
-            )}
+            </motion.div>
 
-            {/* History */}
-            <div className="mt-8 border-t border-white/10 pt-6">
+            {/* Error Message */}
+            <AnimatePresence>
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="mt-5 rounded-xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-center text-sm text-red-200 backdrop-blur-sm"
+                >
+                  {error}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Equalizer Loading Animation */}
+            <AnimatePresence>
+              {loading && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="mt-8 flex flex-col items-center gap-4"
+                >
+                  <EqualizerLoader />
+                  <p className="text-sm text-gray-400">Fetching track info...</p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Video Card */}
+            <AnimatePresence>
+              {videoInfo && !loading && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.4 }}
+                  className="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md"
+                >
+                  {videoInfo.thumbnail && (
+                    <div className="relative">
+                      <img
+                        src={videoInfo.thumbnail}
+                        alt={videoInfo.title}
+                        className="h-56 w-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-dark-900 via-dark-900/50 to-transparent" />
+                      {/* Duration badge */}
+                      <div className="absolute bottom-4 right-4 rounded-lg bg-black/60 px-2 py-1 text-sm font-medium text-white backdrop-blur-sm">
+                        {videoInfo.duration_str}
+                      </div>
+                    </div>
+                  )}
+                  <div className="p-5 sm:p-6">
+                    <motion.h2
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="text-lg font-bold text-white sm:text-xl line-clamp-2"
+                    >
+                      {videoInfo.title}
+                    </motion.h2>
+                    {videoInfo.uploader && (
+                      <p className="mt-1 text-sm text-gray-400">
+                        {videoInfo.uploader}
+                      </p>
+                    )}
+
+                    {/* Processing Options */}
+                    <motion.div
+                      variants={staggerContainer}
+                      initial="hidden"
+                      animate="visible"
+                      className="mt-5"
+                    >
+                      <p className="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500">
+                        🎛️ Audio Mode
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { value: "standard", label: "Standard", icon: "🎵", desc: "Original audio" },
+                          { value: "minus_one", label: "Minus One", icon: "🎤", desc: "AI vocal removal" },
+                          { value: "bass_boost", label: "Bass Boost", icon: "🔊", desc: "+10dB bass" },
+                          { value: "nightcore", label: "Nightcore", icon: "⚡", desc: "1.25x + pitch" },
+                        ].map((mode) => (
+                          <motion.button
+                            key={mode.value}
+                            variants={scaleIn}
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={() => setAudioMode(mode.value as typeof audioMode)}
+                            disabled={downloading}
+                            className={`flex flex-col items-center rounded-xl border p-3 text-center transition-all ${
+                              audioMode === mode.value
+                                ? "border-purple-500/50 bg-purple-500/20 text-white shadow-lg shadow-purple-500/20"
+                                : "border-white/10 bg-white/5 text-gray-300 hover:border-white/20 hover:bg-white/10"
+                            } disabled:cursor-not-allowed disabled:opacity-50`}
+                          >
+                            <span className="text-xl">{mode.icon}</span>
+                            <span className="mt-1 text-xs font-semibold">{mode.label}</span>
+                            <span className="text-[10px] text-gray-500">{mode.desc}</span>
+                          </motion.button>
+                        ))}
+                      </div>
+                    </motion.div>
+
+                    {/* Trim Controls */}
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.2 }}
+                      className="mt-4"
+                    >
+                      <label className="flex cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={enableTrim}
+                          onChange={(e) => setEnableTrim(e.target.checked)}
+                          disabled={downloading}
+                          className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500"
+                        />
+                        <span className="text-xs font-medium text-gray-400">
+                          ✂️ Trim Audio
+                        </span>
+                      </label>
+                      
+                      <AnimatePresence>
+                        {enableTrim && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="mt-3 flex gap-3 overflow-hidden"
+                          >
+                            <div className="flex-1">
+                              <label className="block text-xs text-gray-500 mb-1">Start (sec)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={videoInfo.duration || 9999}
+                                value={startTime}
+                                onChange={(e) => setStartTime(Math.max(0, Number(e.target.value)))}
+                                disabled={downloading}
+                                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none disabled:opacity-50"
+                              />
+                            </div>
+                            <div className="flex-1">
+                              <label className="block text-xs text-gray-500 mb-1">End (sec)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={videoInfo.duration || 9999}
+                                value={endTime}
+                                onChange={(e) => setEndTime(Math.min(videoInfo.duration || 9999, Number(e.target.value)))}
+                                disabled={downloading}
+                                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none disabled:opacity-50"
+                              />
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </motion.div>
+
+                    {/* Download Button */}
+                    <motion.button
+                      whileHover={{ scale: 1.01 }}
+                      whileTap={{ scale: 0.99 }}
+                      onClick={handleDownload}
+                      disabled={downloading || (enableTrim && startTime >= endTime)}
+                      className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 py-4 font-semibold text-white shadow-lg shadow-emerald-500/25 transition-all hover:shadow-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {downloading ? (
+                        <>
+                          <EqualizerLoader />
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" />
+                          </svg>
+                          Download MP3
+                        </>
+                      )}
+                    </motion.button>
+
+                    {/* Download Status */}
+                    <AnimatePresence>
+                      {downloading && downloadStatus && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="mt-3 text-center text-sm text-emerald-300"
+                        >
+                          {downloadStatus}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Maintenance Notice */}
+                    <AnimatePresence>
+                      {showFallback && !downloading && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          className="mt-5"
+                        >
+                          <MaintenanceCard />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* History Section */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.5 }}
+              className="mt-8 border-t border-white/10 pt-6"
+            >
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold tracking-wide text-gray-100">
-                  History
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-300">
+                  <svg className="h-4 w-4 text-purple-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Recent Tracks
                 </h3>
-                <span className="text-xs text-gray-400">Last {HISTORY_LIMIT} conversions</span>
+                <span className="text-xs text-gray-600">Last {HISTORY_LIMIT}</span>
               </div>
 
               {history.length === 0 ? (
-                <p className="mt-3 text-sm text-gray-400">
-                  No history yet. Download an MP3 to see it here.
-                </p>
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="mt-4 text-center text-sm text-gray-600"
+                >
+                  No tracks yet. Search and download to see history.
+                </motion.p>
               ) : (
-                <div className="mt-3 space-y-2">
+                <motion.div
+                  variants={staggerContainer}
+                  initial="hidden"
+                  animate="visible"
+                  className="mt-4 space-y-2"
+                >
                   {history.map((item) => (
-                    <button
+                    <HistoryCard
                       key={item.at}
-                      type="button"
+                      item={item}
                       onClick={() => setUrl(item.url)}
-                      className="w-full rounded-xl border border-white/10 bg-gray-950/30 px-4 py-3 text-left transition hover:bg-gray-950/40"
-                      title={item.url}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium text-gray-100">
-                            {item.title}
-                          </div>
-                          <div className="truncate text-xs text-gray-400">{item.url}</div>
-                        </div>
-                        <div className="shrink-0 text-xs text-gray-500">
-                          {new Date(item.at).toLocaleString()}
-                        </div>
-                      </div>
-                    </button>
+                    />
                   ))}
-                </div>
+                </motion.div>
               )}
-            </div>
+            </motion.div>
           </div>
-        </div>
+        </motion.div>
 
-        {/* Glassmorphism Footer */}
-        <div className="mt-8 w-full rounded-2xl border border-white/10 bg-white/5 p-6 shadow-xl backdrop-blur-xl">
-          <div className="text-center">
-            <p className="text-sm text-gray-300/90 sm:text-base">
-              Built with ☕ and 💻 by an IT Student.
+        {/* Footer Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6 }}
+          className="mt-8 w-full"
+        >
+          <div className="glass rounded-2xl p-6 text-center">
+            <p className="text-sm text-gray-300">
+              Built with ☕ and 💻 by an IT Student
             </p>
-            <p className="mt-1 text-xs text-gray-400 sm:text-sm">
+            <p className="mt-1 text-xs text-gray-500">
               If this helped you, consider supporting my tuition!
             </p>
 
-            <div className="mt-5 flex flex-col items-center justify-center gap-3 sm:flex-row">
-              {/* Buy Me a Coffee Button */}
-              <a
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+              <motion.a
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 href="https://buymeacoffee.com/alvarezrenv"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group flex items-center gap-2 rounded-xl bg-gradient-to-r from-yellow-500 to-orange-500 px-5 py-2.5 font-medium text-white shadow-lg shadow-orange-500/20 transition hover:shadow-orange-500/40 hover:brightness-110"
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-yellow-500 to-orange-500 px-5 py-2.5 font-medium text-white shadow-lg shadow-orange-500/20 transition-all hover:shadow-orange-500/40"
               >
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M20.216 6.415l-.132-.666c-.119-.598-.388-1.163-1.001-1.379-.197-.069-.42-.098-.57-.241-.152-.143-.196-.366-.231-.572-.065-.378-.125-.756-.192-1.133-.057-.325-.102-.69-.25-.987-.195-.4-.597-.634-.996-.788a5.723 5.723 0 00-.626-.194c-1-.263-2.05-.36-3.077-.416a25.834 25.834 0 00-3.7.062c-.915.083-1.88.184-2.75.5-.318.116-.646.256-.888.501-.297.302-.393.77-.177 1.146.154.267.415.456.692.58.36.162.737.284 1.123.366 1.075.238 2.189.331 3.287.37 1.218.05 2.437.01 3.65-.118.299-.033.598-.073.896-.119.352-.054.578-.513.474-.834-.124-.383-.457-.531-.834-.473-.466.074-.96.108-1.382.146-1.177.08-2.358.082-3.536.006a22.228 22.228 0 01-1.157-.107c-.086-.01-.18-.025-.258-.036-.243-.036-.484-.08-.724-.13-.111-.027-.111-.185 0-.212h.005c.277-.06.557-.108.838-.147h.002c.131-.009.263-.032.394-.048a25.076 25.076 0 013.426-.12c.674.019 1.347.067 2.017.144l.228.031c.267.04.533.088.798.145.392.085.895.113 1.07.542.055.137.08.288.111.431l.319 1.484a.237.237 0 01-.199.284h-.003c-.037.006-.075.01-.112.015a36.704 36.704 0 01-4.743.295 37.059 37.059 0 01-4.699-.304c-.14-.017-.293-.042-.417-.06-.326-.048-.649-.108-.973-.161-.393-.065-.768-.032-1.123.161-.29.16-.527.404-.675.701-.154.316-.199.66-.267 1-.069.34-.176.707-.135 1.056.087.753.613 1.365 1.37 1.502a39.69 39.69 0 0011.343.376.483.483 0 01.535.53l-.071.697-1.018 9.907c-.041.41-.047.832-.125 1.237-.122.637-.553 1.028-1.182 1.171-.577.131-1.165.2-1.756.205-.656.004-1.31-.025-1.966-.022-.699.004-1.556-.06-2.095-.58-.475-.458-.54-1.174-.605-1.793l-.731-7.013-.322-3.094c-.037-.351-.286-.695-.678-.678-.336.015-.718.3-.678.679l.228 2.185.949 9.112c.147 1.344 1.174 2.068 2.446 2.272.742.12 1.503.144 2.257.156.966.016 1.942.053 2.892-.122 1.408-.258 2.465-1.198 2.616-2.657.34-3.332.683-6.663 1.024-9.995l.215-2.087a.484.484 0 01.39-.426c.402-.078.787-.212 1.074-.518.455-.488.546-1.124.385-1.766zm-1.478.772c-.145.137-.363.201-.578.233-2.416.359-4.866.54-7.308.46-1.748-.06-3.477-.254-5.207-.498-.17-.024-.353-.055-.47-.18-.22-.236-.111-.71-.054-.995.052-.26.152-.609.463-.646.484-.057 1.046.148 1.526.22.577.088 1.156.159 1.737.212 2.48.226 5.002.19 7.472-.14.45-.06.899-.13 1.345-.21.399-.072.84-.206 1.08.206.166.281.188.657.162.974a.544.544 0 01-.169.364z" />
                 </svg>
                 Buy Me a Coffee
-              </a>
+              </motion.a>
 
-              {/* GCash/Maya Button */}
-              <button
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => setShowDonationModal(true)}
-                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 px-5 py-2.5 font-medium text-white shadow-lg shadow-cyan-500/20 transition hover:shadow-cyan-500/40 hover:brightness-110"
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 px-5 py-2.5 font-medium text-white shadow-lg shadow-cyan-500/20 transition-all hover:shadow-cyan-500/40"
               >
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
                 </svg>
                 GCash / Maya
-              </button>
+              </motion.button>
             </div>
           </div>
-        </div>
+        </motion.div>
 
-        <p className="mt-6 text-center text-xs text-gray-500">
-          Built with Next.js, Tailwind & FastAPI
-        </p>
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.8 }}
+          className="mt-6 text-center text-xs text-gray-600"
+        >
+          Built with Next.js, Tailwind CSS & FastAPI
+        </motion.p>
       </div>
 
       {/* Donation Modal */}
-      {showDonationModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          onClick={() => setShowDonationModal(false)}
-        >
-          {/* Backdrop */}
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" />
-
-          {/* Modal */}
-          <div
-            className="relative w-full max-w-sm animate-[popIn_0.2s_ease-out] rounded-2xl border border-white/20 bg-gray-900/90 p-6 shadow-2xl backdrop-blur-xl sm:p-8"
-            onClick={(e) => e.stopPropagation()}
+      <AnimatePresence>
+        {showDonationModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            onClick={() => setShowDonationModal(false)}
           >
-            {/* Close Button */}
-            <button
-              onClick={() => setShowDonationModal(false)}
-              className="absolute right-4 top-4 rounded-lg p-1 text-gray-400 transition hover:bg-white/10 hover:text-white"
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="glass-card relative w-full max-w-sm rounded-3xl p-6 sm:p-8"
+              onClick={(e) => e.stopPropagation()}
             >
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-
-            <div className="text-center">
-              <h2 className="text-xl font-bold text-white sm:text-2xl">
-                Support via GCash / Maya
-              </h2>
-              <p className="mt-2 text-sm text-gray-400">
-                Scan the QR code or copy the number below
-              </p>
-
-              {/* QR Code */}
-              <div className="mx-auto mt-6 w-40 max-w-[70vw] overflow-hidden rounded-xl border border-white/20 bg-white p-3 sm:w-48">
-                <img
-                  src="/qr-code.jpg"
-                  alt="GCash/Maya QR Code"
-                  className="h-full w-full object-contain"
-                  onError={(e) => {
-                    // Fallback if QR image doesn't exist
-                    (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect fill='%23f3f4f6' width='200' height='200'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-family='sans-serif' font-size='14'%3EQR Code%3C/text%3E%3C/svg%3E";
-                  }}
-                />
-              </div>
-
-              {/* Payment Number */}
-              <div className="mt-5">
-                <p className="text-xs text-gray-500 uppercase tracking-wider">Account Number</p>
-                <p className="mt-1 text-2xl font-bold tracking-wider text-white">{PAYMENT_NUMBER}</p>
-              </div>
-
-              {/* Copy Button */}
               <button
-                onClick={copyPaymentNumber}
-                className={`mt-5 flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 font-medium text-white transition ${
-                  copied
-                    ? "bg-emerald-600"
-                    : "bg-gradient-to-r from-blue-500 to-cyan-500 hover:brightness-110"
-                }`}
+                onClick={() => setShowDonationModal(false)}
+                className="absolute right-4 top-4 rounded-lg p-2 text-gray-400 transition hover:bg-white/10 hover:text-white"
               >
-                {copied ? (
-                  <>
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                    Copied!
-                  </>
-                ) : (
-                  <>
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                    Copy Number
-                  </>
-                )}
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
 
-              <p className="mt-4 text-xs text-gray-500">
-                Thank you for your support! 💜
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-white sm:text-2xl">
+                  Support via GCash / Maya
+                </h2>
+                <p className="mt-2 text-sm text-gray-400">
+                  Scan the QR code or copy the number below
+                </p>
+
+                <div className="mx-auto mt-6 w-40 max-w-[70vw] overflow-hidden rounded-xl border border-white/20 bg-white p-3 sm:w-48">
+                  <img
+                    src="/qr-code.jpg"
+                    alt="GCash/Maya QR Code"
+                    className="h-full w-full object-contain"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect fill='%23f3f4f6' width='200' height='200'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239ca3af' font-family='sans-serif' font-size='14'%3EQR Code%3C/text%3E%3C/svg%3E";
+                    }}
+                  />
+                </div>
+
+                <div className="mt-5">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider">Account Number</p>
+                  <p className="mt-1 text-2xl font-bold tracking-wider text-white">{PAYMENT_NUMBER}</p>
+                </div>
+
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={copyPaymentNumber}
+                  className={`mt-5 flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 font-medium text-white transition ${
+                    copied
+                      ? "bg-emerald-600"
+                      : "bg-gradient-to-r from-blue-500 to-cyan-500 hover:brightness-110"
+                  }`}
+                >
+                  {copied ? (
+                    <>
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                      Copy Number
+                    </>
+                  )}
+                </motion.button>
+
+                <p className="mt-4 text-xs text-gray-500">
+                  Thank you for your support! 💜
+                </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }
