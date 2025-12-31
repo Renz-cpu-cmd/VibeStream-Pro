@@ -382,10 +382,12 @@ PIPED_INSTANCES = [
     "https://piped-api.lunar.icu",
 ]
 
-# Cobalt API - another reliable fallback for audio extraction
+# Cobalt API - very reliable fallback for audio extraction
+# Main instance + community instances
 COBALT_INSTANCES = [
     "https://api.cobalt.tools",
-    "https://cobalt-api.hyper.lol",
+    "https://cobalt.api.timelessnesses.me",
+    "https://cobalt-api.kwiatekmiki.com",
 ]
 
 
@@ -393,30 +395,50 @@ def get_cobalt_audio(video_id: str) -> tuple[str, dict] | None:
     """
     Get audio URL using Cobalt API - very reliable for YouTube.
     Cobalt is specifically designed for media extraction.
+    Uses the v7 API format.
     """
+    youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+    
     for instance in COBALT_INSTANCES:
         try:
+            # Try the newer /api/json endpoint
             url = f"{instance}/api/json"
             payload = {
-                "url": f"https://www.youtube.com/watch?v={video_id}",
-                "vCodec": "h264",
-                "vQuality": "720",
+                "url": youtube_url,
                 "aFormat": "mp3",
                 "isAudioOnly": True,
+                "filenamePattern": "basic",
             }
             headers = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
             }
-            with httpx.Client(timeout=15.0) as client:
+            
+            with httpx.Client(timeout=20.0, follow_redirects=True) as client:
                 response = client.post(url, json=payload, headers=headers)
+                
                 if response.status_code == 200:
                     data = response.json()
-                    if data.get("status") == "stream" or data.get("status") == "redirect":
+                    status = data.get("status")
+                    
+                    # Handle different response types
+                    if status in ["stream", "redirect", "tunnel"]:
                         audio_url = data.get("url")
                         if audio_url:
                             logger.info(f"✅ Cobalt fallback successful ({instance})")
                             return audio_url, {"title": "audio", "video_id": video_id}
+                    elif status == "picker":
+                        # Multiple options available, get the audio one
+                        picker = data.get("picker", [])
+                        for item in picker:
+                            if item.get("type") == "audio":
+                                audio_url = item.get("url")
+                                if audio_url:
+                                    logger.info(f"✅ Cobalt fallback successful ({instance})")
+                                    return audio_url, {"title": "audio", "video_id": video_id}
+                else:
+                    logger.warning(f"Cobalt {instance} returned {response.status_code}")
+                    
         except Exception as e:
             logger.warning(f"Cobalt instance {instance} failed: {e}")
             continue
@@ -954,42 +976,56 @@ def download_audio(
         logger.warning(f"yt-dlp info fetch failed, trying fallback: {e}")
         use_fallback = True
 
-    # Fallback for info extraction
+    # Fallback for info extraction - use YouTube API first (most reliable for metadata)
     if info is None or use_fallback:
-        logger.info("🔄 Attempting Invidious/Piped/Cobalt fallback for download...")
+        logger.info("🔄 Attempting fallback for download metadata...")
         
         if is_search:
-            # Try Invidious search first, then Piped
-            search_result = search_invidious(input_text)
-            if not search_result:
-                search_result = search_piped(input_text)
-            if search_result:
-                video_id = search_result.get("videoId")
-        
-        if video_id:
-            # Try to get audio URL from Invidious
-            inv_result = get_audio_url_from_invidious(video_id)
-            if inv_result:
-                fallback_audio_url, inv_meta = inv_result
+            # Use YouTube API for search (most reliable)
+            api_result = search_youtube_api(input_text)
+            if api_result:
+                video_id = api_result.get("videoId")
                 info = {
-                    "title": inv_meta.get("title", "audio"),
-                    "uploader": inv_meta.get("uploader", ""),
-                    "thumbnail": inv_meta.get("thumbnail"),
-                    "duration": inv_meta.get("duration"),
+                    "title": api_result.get("title", "audio"),
+                    "uploader": api_result.get("author", ""),
+                    "thumbnail": api_result.get("videoThumbnails", [{}])[0].get("url") if api_result.get("videoThumbnails") else None,
+                    "duration": None,
                     "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
                 }
             else:
-                # Try Piped
-                piped_result = get_audio_url_from_piped(video_id)
-                if piped_result:
-                    fallback_audio_url, piped_meta = piped_result
+                # Fallback to Invidious/Piped search
+                search_result = search_invidious(input_text)
+                if not search_result:
+                    search_result = search_piped(input_text)
+                if search_result:
+                    video_id = search_result.get("videoId")
                     info = {
-                        "title": piped_meta.get("title", "audio"),
-                        "uploader": piped_meta.get("uploader", ""),
-                        "thumbnail": piped_meta.get("thumbnail"),
-                        "duration": piped_meta.get("duration"),
+                        "title": search_result.get("title", "audio"),
+                        "uploader": search_result.get("author", ""),
+                        "thumbnail": None,
+                        "duration": search_result.get("lengthSeconds"),
                         "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
                     }
+        elif video_id:
+            # Direct video - use YouTube API for metadata
+            api_info = get_youtube_api_video_info(video_id)
+            if api_info:
+                info = {
+                    "title": api_info.get("title", "audio"),
+                    "uploader": api_info.get("uploader", ""),
+                    "thumbnail": api_info.get("thumbnail"),
+                    "duration": api_info.get("duration"),
+                    "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                }
+            else:
+                # Minimal info if API fails
+                info = {
+                    "title": "audio",
+                    "uploader": "",
+                    "thumbnail": None,
+                    "duration": None,
+                    "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+                }
 
     if info is None:
         raise HTTPException(status_code=400, detail="No results found")
@@ -1015,7 +1051,7 @@ def download_audio(
     download_success = False
 
     # Try yt-dlp download first (if it wasn't already failing)
-    if not use_fallback and fallback_audio_url is None:
+    if not use_fallback:
         ydl_download_opts = build_ydl_opts(for_download=True, include_ffmpeg=True)
         ydl_download_opts.update({
             "format": "bestaudio/best",
@@ -1039,12 +1075,19 @@ def download_audio(
             if not video_id:
                 video_id = extract_video_id(actual_url)
 
-    # Fallback: Download from Invidious/Piped/Cobalt direct URL
-    if not download_success:
-        logger.info("🔄 Using Invidious/Piped/Cobalt fallback for audio download...")
+    # Fallback: Try Cobalt FIRST (most reliable), then Invidious/Piped
+    if not download_success and video_id:
+        logger.info("🔄 Using Cobalt/Invidious/Piped fallback for audio download...")
         
-        if not fallback_audio_url and video_id:
-            # Try Invidious first
+        fallback_audio_url = None
+        
+        # Try Cobalt FIRST (most reliable for direct download)
+        cobalt_result = get_cobalt_audio(video_id)
+        if cobalt_result:
+            fallback_audio_url = cobalt_result[0]
+            logger.info("✅ Using Cobalt for download")
+        else:
+            # Try Invidious
             inv_result = get_audio_url_from_invidious(video_id)
             if inv_result:
                 fallback_audio_url = inv_result[0]
@@ -1053,11 +1096,6 @@ def download_audio(
                 piped_result = get_audio_url_from_piped(video_id)
                 if piped_result:
                     fallback_audio_url = piped_result[0]
-                else:
-                    # Try Cobalt (most reliable for direct download)
-                    cobalt_result = get_cobalt_audio(video_id)
-                    if cobalt_result:
-                        fallback_audio_url = cobalt_result[0]
         
         if fallback_audio_url:
             try:
