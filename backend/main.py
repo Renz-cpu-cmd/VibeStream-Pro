@@ -268,21 +268,67 @@ def prepare_url(input_text: str) -> str:
 
 
 # ---------- Invidious/Piped Fallback API ----------
-# Public instances (rotated for load balancing)
+# Public instances (updated Dec 2025 - verified working)
+# Fetched from https://api.invidious.io/ and https://piped-instances.kavin.rocks/
 INVIDIOUS_INSTANCES = [
-    "https://invidious.fdn.fr",
-    "https://inv.nadeko.net",
-    "https://invidious.nerdvpn.de",
-    "https://inv.tux.pizza",
-    "https://invidious.protokolla.fi",
+    "https://vid.puffyan.us",
+    "https://invidious.lunar.icu",
+    "https://iv.ggtyler.dev",
+    "https://invidious.privacyredirect.com",
+    "https://invidious.drgns.space",
+    "https://inv.us.projectsegfau.lt",
+    "https://invidious.io.lol",
+    "https://yt.cdaut.de",
 ]
 
 PIPED_INSTANCES = [
     "https://pipedapi.kavin.rocks",
-    "https://pipedapi.adminforge.de",
-    "https://api.piped.yt",
-    "https://pipedapi.in.projectsegfau.lt",
+    "https://pipedapi.r4fo.com",
+    "https://api.piped.privacydev.net",
+    "https://pipedapi.darkness.services",
+    "https://pipedapi.syncpundit.io",
+    "https://piped-api.lunar.icu",
 ]
+
+# Cobalt API - another reliable fallback for audio extraction
+COBALT_INSTANCES = [
+    "https://api.cobalt.tools",
+    "https://cobalt-api.hyper.lol",
+]
+
+
+def get_cobalt_audio(video_id: str) -> tuple[str, dict] | None:
+    """
+    Get audio URL using Cobalt API - very reliable for YouTube.
+    Cobalt is specifically designed for media extraction.
+    """
+    for instance in COBALT_INSTANCES:
+        try:
+            url = f"{instance}/api/json"
+            payload = {
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "vCodec": "h264",
+                "vQuality": "720",
+                "aFormat": "mp3",
+                "isAudioOnly": True,
+            }
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+            with httpx.Client(timeout=15.0) as client:
+                response = client.post(url, json=payload, headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("status") == "stream" or data.get("status") == "redirect":
+                        audio_url = data.get("url")
+                        if audio_url:
+                            logger.info(f"✅ Cobalt fallback successful ({instance})")
+                            return audio_url, {"title": "audio", "video_id": video_id}
+        except Exception as e:
+            logger.warning(f"Cobalt instance {instance} failed: {e}")
+            continue
+    return None
 
 
 def get_invidious_video_info(video_id: str) -> dict | None:
@@ -290,15 +336,16 @@ def get_invidious_video_info(video_id: str) -> dict | None:
     instances = INVIDIOUS_INSTANCES.copy()
     random.shuffle(instances)
     
-    for instance in instances[:3]:  # Try up to 3 instances
+    for instance in instances[:5]:  # Try up to 5 instances
         try:
             url = f"{instance}/api/v1/videos/{video_id}"
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=15.0, follow_redirects=True) as client:
                 response = client.get(url)
                 if response.status_code == 200:
                     data = response.json()
-                    logger.info(f"✅ Invidious fallback successful ({instance})")
-                    return data
+                    if "error" not in data:
+                        logger.info(f"✅ Invidious fallback successful ({instance})")
+                        return data
         except Exception as e:
             logger.warning(f"Invidious instance {instance} failed: {e}")
             continue
@@ -310,14 +357,15 @@ def get_piped_video_info(video_id: str) -> dict | None:
     instances = PIPED_INSTANCES.copy()
     random.shuffle(instances)
     
-    for instance in instances[:3]:  # Try up to 3 instances
+    for instance in instances[:5]:  # Try up to 5 instances
         try:
             url = f"{instance}/streams/{video_id}"
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=15.0, follow_redirects=True) as client:
                 response = client.get(url)
                 if response.status_code == 200:
                     data = response.json()
-                    logger.info(f"✅ Piped fallback successful ({instance})")
+                    if "error" not in data:
+                        logger.info(f"✅ Piped fallback successful ({instance})")
                     return data
         except Exception as e:
             logger.warning(f"Piped instance {instance} failed: {e}")
@@ -330,19 +378,52 @@ def search_invidious(query: str) -> dict | None:
     instances = INVIDIOUS_INSTANCES.copy()
     random.shuffle(instances)
     
-    for instance in instances[:3]:
+    for instance in instances[:5]:  # Try more instances
         try:
             url = f"{instance}/api/v1/search"
             params = {"q": query, "type": "video"}
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=15.0, follow_redirects=True) as client:
                 response = client.get(url, params=params)
                 if response.status_code == 200:
                     results = response.json()
-                    if results and len(results) > 0:
+                    if results and len(results) > 0 and isinstance(results, list):
                         logger.info(f"✅ Invidious search successful ({instance})")
                         return results[0]  # Return first result
         except Exception as e:
             logger.warning(f"Invidious search on {instance} failed: {e}")
+            continue
+    return None
+
+
+def search_piped(query: str) -> dict | None:
+    """Search for videos using Piped API."""
+    instances = PIPED_INSTANCES.copy()
+    random.shuffle(instances)
+    
+    for instance in instances[:5]:
+        try:
+            url = f"{instance}/search"
+            params = {"q": query, "filter": "videos"}
+            with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+                response = client.get(url, params=params)
+                if response.status_code == 200:
+                    data = response.json()
+                    items = data.get("items", [])
+                    if items and len(items) > 0:
+                        first = items[0]
+                        # Convert Piped format to our format
+                        video_url = first.get("url", "")
+                        video_id = video_url.split("?v=")[-1] if "?v=" in video_url else None
+                        logger.info(f"✅ Piped search successful ({instance})")
+                        return {
+                            "videoId": video_id,
+                            "title": first.get("title"),
+                            "author": first.get("uploaderName"),
+                            "lengthSeconds": first.get("duration"),
+                            "videoThumbnails": [{"url": first.get("thumbnail")}] if first.get("thumbnail") else [],
+                        }
+        except Exception as e:
+            logger.warning(f"Piped search on {instance} failed: {e}")
             continue
     return None
 
@@ -644,8 +725,11 @@ def analyze_video(request: Request, body: AnalyzeRequest):
         logger.info("🔄 Attempting Invidious/Piped fallback...")
         
         if is_search:
-            # Search using Invidious
+            # Search using Invidious first, then Piped
             search_result = search_invidious(input_text)
+            if not search_result:
+                search_result = search_piped(input_text)
+            
             if search_result:
                 video_id = search_result.get("videoId")
                 info = {
@@ -755,10 +839,13 @@ def download_audio(
 
     # Fallback for info extraction
     if info is None or use_fallback:
-        logger.info("🔄 Attempting Invidious/Piped fallback for download...")
+        logger.info("🔄 Attempting Invidious/Piped/Cobalt fallback for download...")
         
         if is_search:
+            # Try Invidious search first, then Piped
             search_result = search_invidious(input_text)
+            if not search_result:
+                search_result = search_piped(input_text)
             if search_result:
                 video_id = search_result.get("videoId")
         
@@ -835,18 +922,25 @@ def download_audio(
             if not video_id:
                 video_id = extract_video_id(actual_url)
 
-    # Fallback: Download from Invidious/Piped direct URL
+    # Fallback: Download from Invidious/Piped/Cobalt direct URL
     if not download_success:
-        logger.info("🔄 Using Invidious/Piped fallback for audio download...")
+        logger.info("🔄 Using Invidious/Piped/Cobalt fallback for audio download...")
         
         if not fallback_audio_url and video_id:
+            # Try Invidious first
             inv_result = get_audio_url_from_invidious(video_id)
             if inv_result:
                 fallback_audio_url = inv_result[0]
             else:
+                # Try Piped
                 piped_result = get_audio_url_from_piped(video_id)
                 if piped_result:
                     fallback_audio_url = piped_result[0]
+                else:
+                    # Try Cobalt (most reliable for direct download)
+                    cobalt_result = get_cobalt_audio(video_id)
+                    if cobalt_result:
+                        fallback_audio_url = cobalt_result[0]
         
         if fallback_audio_url:
             try:
