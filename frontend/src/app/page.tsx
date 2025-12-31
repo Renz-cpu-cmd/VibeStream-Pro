@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import TrendingSection from "@/components/TrendingSection";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -872,6 +873,11 @@ export default function HomePage() {
                 </motion.div>
               )}
             </motion.div>
+
+            {/* Trending Section */}
+            <div className="mt-6">
+              <TrendingSection onSongClick={(url) => setUrl(url)} />
+            </div>
           </div>
         </motion.div>
 
