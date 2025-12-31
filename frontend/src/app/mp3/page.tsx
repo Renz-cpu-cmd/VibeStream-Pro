@@ -294,7 +294,7 @@ export default function MP3Page() {
             variants={fadeInUp}
             className="mx-auto mt-4 max-w-md text-gray-400"
           >
-            Convert YouTube videos to high-quality MP3. Choose your bitrate.
+            Convert videos to high-quality MP3 from YouTube, TikTok, Instagram, Twitter & more.
           </motion.p>
         </motion.div>
 
@@ -324,7 +324,7 @@ export default function MP3Page() {
                       onFocus={() => setIsSearchFocused(true)}
                       onBlur={() => setIsSearchFocused(false)}
                       onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
-                      placeholder="Paste a YouTube URL to convert..."
+                      placeholder="Paste any video URL (YouTube, TikTok, Instagram...)"
                       className="w-full rounded-2xl border border-white/10 bg-white/5 py-4 pl-12 pr-4 text-white placeholder:text-gray-500 backdrop-blur-sm transition-all focus:border-emerald-500/50 focus:bg-white/10 focus:outline-none"
                     />
                   </div>
@@ -515,10 +515,10 @@ export default function MP3Page() {
                   className="mt-5 rounded-xl border border-amber-500/30 bg-amber-950/30 p-4 text-center backdrop-blur-sm"
                 >
                   <p className="text-sm text-amber-200">
-                    ⚠️ YouTube is currently blocking third-party services.
+                    ⚠️ This platform may be blocking third-party services.
                   </p>
                   <p className="mt-1 text-xs text-amber-300/70">
-                    Try again later or use yt-dlp locally for best results.
+                    Try again later, use a different link, or run locally for best results.
                   </p>
                 </motion.div>
               )}
@@ -537,8 +537,8 @@ export default function MP3Page() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                 </div>
-                <div className="text-xs font-medium text-gray-300">Fast</div>
-                <div className="text-xs text-gray-500">Conversion</div>
+                <div className="text-xs font-medium text-gray-300">1000+</div>
+                <div className="text-xs text-gray-500">Sites Supported</div>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center backdrop-blur-sm">
                 <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-400">
@@ -557,6 +557,29 @@ export default function MP3Page() {
                 </div>
                 <div className="text-xs font-medium text-gray-300">No Limit</div>
                 <div className="text-xs text-gray-500">Free Forever</div>
+              </div>
+            </motion.div>
+
+            {/* Supported Platforms */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.6 }}
+              className="mt-6 text-center"
+            >
+              <p className="text-xs text-gray-500 mb-2">Supported Platforms</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {["YouTube", "TikTok", "Instagram", "Twitter/X", "Facebook", "SoundCloud", "Vimeo", "Dailymotion"].map((platform) => (
+                  <span
+                    key={platform}
+                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-400"
+                  >
+                    {platform}
+                  </span>
+                ))}
+                <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-400">
+                  +1000 more
+                </span>
               </div>
             </motion.div>
           </div>

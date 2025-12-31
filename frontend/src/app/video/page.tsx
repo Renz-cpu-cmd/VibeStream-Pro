@@ -266,7 +266,7 @@ export default function VideoPage() {
             variants={fadeInUp}
             className="mx-auto mt-4 max-w-md text-gray-400"
           >
-            Download videos in HD quality. Choose your preferred resolution.
+            Download videos in HD from YouTube, TikTok, Instagram, Twitter & 1000+ sites.
           </motion.p>
         </motion.div>
 
@@ -296,7 +296,7 @@ export default function VideoPage() {
                       onFocus={() => setIsSearchFocused(true)}
                       onBlur={() => setIsSearchFocused(false)}
                       onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
-                      placeholder="Paste a YouTube URL..."
+                      placeholder="Paste any video URL (YouTube, TikTok, Instagram...)"
                       className="w-full rounded-2xl border border-white/10 bg-white/5 py-4 pl-12 pr-4 text-white placeholder:text-gray-500 backdrop-blur-sm transition-all focus:border-red-500/50 focus:bg-white/10 focus:outline-none"
                     />
                   </div>
