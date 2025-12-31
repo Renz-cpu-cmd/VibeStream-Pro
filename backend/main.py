@@ -850,7 +850,25 @@ def embed_metadata(mp3_path: Path, title: str, artist: str, thumbnail_url: Optio
 # ---------- Routes ----------
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    """
+    Health check endpoint with detailed status.
+    Returns service health for YouTube engine, FFmpeg, etc.
+    """
+    import datetime
+    
+    # Check FFmpeg availability
+    ffmpeg_available = shutil.which("ffmpeg") is not None or FFMPEG_EXE.exists()
+    
+    # YouTube engine status - assume limited due to ongoing bot detection
+    # In production, you could do a test request to check
+    youtube_status = "limited"  # or "operational" or "down"
+    
+    return {
+        "status": "ok",
+        "youtube_engine": youtube_status,
+        "ffmpeg": ffmpeg_available,
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+    }
 
 
 @app.get("/")

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Navbar from "@/components/Navbar";
-import SystemAlert from "@/components/SystemAlert";
+import ClientLayout from "@/components/ClientLayout";
 
 export const metadata: Metadata = {
   title: "VibeStream Pro",
@@ -16,9 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-gray-950 text-white antialiased">
-        <Navbar />
-        <SystemAlert />
-        {children}
+        <ClientLayout>{children}</ClientLayout>
       </body>
     </html>
   );

@@ -10,7 +10,11 @@ const navItems = [
   { href: "/status", label: "Status", icon: "📊" },
 ];
 
-export default function Navbar() {
+interface NavbarProps {
+  onProClick?: () => void;
+}
+
+export default function Navbar({ onProClick }: NavbarProps) {
   const pathname = usePathname();
 
   return (
@@ -18,7 +22,7 @@ export default function Navbar() {
       initial={{ y: -20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.5, ease: "easeOut" }}
-      className="fixed top-4 left-1/2 z-50 -translate-x-1/2"
+      className="fixed top-6 left-6 z-50"
     >
       <div className="flex items-center gap-1 rounded-2xl border border-white/10 bg-white/5 p-1.5 shadow-2xl shadow-black/20 backdrop-blur-xl">
         {navItems.map((item) => {
@@ -48,11 +52,16 @@ export default function Navbar() {
           );
         })}
         
-        {/* Pro Badge */}
-        <div className="ml-2 flex items-center gap-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 px-2.5 py-1.5 border border-amber-500/30">
+        {/* Pro Badge - Clickable Button */}
+        <motion.button
+          onClick={onProClick}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          className="ml-2 flex cursor-pointer items-center gap-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 px-2.5 py-1.5 border border-amber-500/30 transition-all hover:from-amber-500/30 hover:to-orange-500/30 hover:border-amber-500/50 hover:shadow-lg hover:shadow-amber-500/20"
+        >
           <span className="text-xs">✨</span>
           <span className="text-xs font-semibold text-amber-300">PRO</span>
-        </div>
+        </motion.button>
       </div>
     </motion.nav>
   );
