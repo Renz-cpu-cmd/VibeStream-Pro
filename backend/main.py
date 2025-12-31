@@ -382,67 +382,125 @@ PIPED_INSTANCES = [
     "https://piped-api.lunar.icu",
 ]
 
-# Cobalt API - very reliable fallback for audio extraction
-# Main instance + community instances
+# Cobalt API - updated for v10 API format (Dec 2025)
 COBALT_INSTANCES = [
     "https://api.cobalt.tools",
-    "https://cobalt.api.timelessnesses.me",
-    "https://cobalt-api.kwiatekmiki.com",
 ]
 
 
 def get_cobalt_audio(video_id: str) -> tuple[str, dict] | None:
     """
-    Get audio URL using Cobalt API - very reliable for YouTube.
-    Cobalt is specifically designed for media extraction.
-    Uses the v7 API format.
+    Get audio URL using Cobalt API v10 format.
     """
     youtube_url = f"https://www.youtube.com/watch?v={video_id}"
     
     for instance in COBALT_INSTANCES:
         try:
-            # Try the newer /api/json endpoint
-            url = f"{instance}/api/json"
+            url = f"{instance}/"
             payload = {
                 "url": youtube_url,
-                "aFormat": "mp3",
-                "isAudioOnly": True,
-                "filenamePattern": "basic",
+                "downloadMode": "audio",
+                "audioFormat": "mp3",
             }
             headers = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
             }
             
-            with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 response = client.post(url, json=payload, headers=headers)
+                logger.info(f"Cobalt response: {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
                     status = data.get("status")
                     
-                    # Handle different response types
-                    if status in ["stream", "redirect", "tunnel"]:
+                    if status in ["tunnel", "redirect", "stream"]:
                         audio_url = data.get("url")
                         if audio_url:
-                            logger.info(f"✅ Cobalt fallback successful ({instance})")
+                            logger.info(f"✅ Cobalt fallback successful")
                             return audio_url, {"title": "audio", "video_id": video_id}
-                    elif status == "picker":
-                        # Multiple options available, get the audio one
-                        picker = data.get("picker", [])
-                        for item in picker:
-                            if item.get("type") == "audio":
-                                audio_url = item.get("url")
-                                if audio_url:
-                                    logger.info(f"✅ Cobalt fallback successful ({instance})")
-                                    return audio_url, {"title": "audio", "video_id": video_id}
-                else:
-                    logger.warning(f"Cobalt {instance} returned {response.status_code}")
+                elif response.status_code == 400:
+                    # Log the error for debugging
+                    try:
+                        error_data = response.json()
+                        logger.warning(f"Cobalt error: {error_data}")
+                    except:
+                        pass
                     
         except Exception as e:
             logger.warning(f"Cobalt instance {instance} failed: {e}")
             continue
     return None
+
+
+def download_with_ytdlp_proxy(video_id: str, output_path: Path) -> bool:
+    """
+    Try yt-dlp with alternative configurations that might bypass detection.
+    """
+    configs_to_try = [
+        # Config 1: Web creator client (newer, less restricted)
+        {
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["web_creator"],
+                }
+            },
+        },
+        # Config 2: TV embed client
+        {
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["tv_embedded"],
+                }
+            },
+        },
+        # Config 3: MediaConnect client
+        {
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["mediaconnect"],
+                }
+            },
+        },
+    ]
+    
+    for i, extra_opts in enumerate(configs_to_try):
+        try:
+            logger.info(f"🔄 Trying yt-dlp config {i+1}...")
+            opts = {
+                "format": "bestaudio/best",
+                "outtmpl": str(output_path / "%(title)s.%(ext)s"),
+                "noplaylist": True,
+                "quiet": True,
+                "no_warnings": True,
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
+            }
+            opts.update(extra_opts)
+            
+            if FFMPEG_LOCATION:
+                opts["ffmpeg_location"] = FFMPEG_LOCATION
+            if USE_COOKIES:
+                opts["cookiefile"] = str(COOKIE_FILE)
+            
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+            
+            # Check if MP3 was created
+            mp3_files = list(output_path.glob("*.mp3"))
+            if mp3_files:
+                logger.info(f"✅ yt-dlp config {i+1} successful")
+                return True
+                
+        except Exception as e:
+            logger.warning(f"yt-dlp config {i+1} failed: {e}")
+            continue
+    
+    return False
 
 
 def get_invidious_video_info(video_id: str) -> dict | None:
@@ -1075,7 +1133,12 @@ def download_audio(
             if not video_id:
                 video_id = extract_video_id(actual_url)
 
-    # Fallback: Try Cobalt FIRST (most reliable), then Invidious/Piped
+    # Fallback 1: Try alternative yt-dlp configs (web_creator, tv_embedded, etc.)
+    if not download_success and video_id:
+        logger.info("🔄 Trying alternative yt-dlp configurations...")
+        download_success = download_with_ytdlp_proxy(video_id, tmp_path)
+
+    # Fallback 2: Try Cobalt, then Invidious/Piped
     if not download_success and video_id:
         logger.info("🔄 Using Cobalt/Invidious/Piped fallback for audio download...")
         
@@ -1127,7 +1190,7 @@ def download_audio(
 
     if not download_success:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail="Download failed from all sources")
+        raise HTTPException(status_code=500, detail="Download failed from all sources. YouTube is blocking requests from this server.")
 
     mp3_files = list(tmp_path.glob("*.mp3"))
     if not mp3_files:
